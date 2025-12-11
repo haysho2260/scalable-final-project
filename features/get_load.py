@@ -4,6 +4,7 @@ import os
 import urllib.parse
 import pandas as pd
 import re
+from datetime import datetime
 
 def get_file_urls(base_url):
     """
@@ -408,10 +409,49 @@ def process_lag_features(source_dir):
                      elif c in ['HR', 'CAISO']: is_garbage = True # Exact match for these likely garbage headers
                      elif 'spring dst' in c_lower: is_garbage = True
                      
+                     elif 'spring dst' in c_lower: is_garbage = True
+                     
                      if is_garbage:
                          cols_to_drop.append(c)
 
-            save_df = group.drop(columns=cols_to_drop, errors='ignore')
+            # --- Cleaning Start ---
+            # 1. Enforce Hourly Continuity
+            date_col_final = next((c for c in group.columns if 'date' in str(c).lower()), None)
+            
+            # Need to ensure date_col_final is actual datetime
+            if date_col_final:
+                # Create strict hourly index for target month
+                min_dt = datetime(year, int(month), 1)
+                if int(month) == 12:
+                    next_month = datetime(year + 1, 1, 1)
+                else:
+                    next_month = datetime(year, int(month) + 1, 1)
+                
+                # Full hourly range
+                full_idx = pd.date_range(start=min_dt, end=next_month, freq='h', inclusive='left')
+                
+                # Reindex
+                # Ensure group is sorted and unique on date_col
+                clean_df = group.sort_values(date_col_final).drop_duplicates(subset=[date_col_final])
+                clean_df = clean_df.set_index(date_col_final).reindex(full_idx)
+                clean_df.index.name = date_col_final # Restore name
+                clean_df = clean_df.reset_index()
+                
+                # 2. Interpolate
+                numeric_cols = clean_df.select_dtypes(include=['float64', 'int64']).columns
+                # Only interpolate columns that are not garbage
+                valid_numeric = [c for c in numeric_cols if c not in cols_to_drop]
+                
+                if valid_numeric:
+                    clean_df[valid_numeric] = clean_df[valid_numeric].interpolate(method='linear', limit_direction='both')
+                    clean_df[valid_numeric] = clean_df[valid_numeric].ffill().bfill().fillna(0)
+                
+                # Use clean_df for saving
+                save_df = clean_df.drop(columns=cols_to_drop, errors='ignore')
+            else:
+                 # Fallback if no date col found (unlikely)
+                 save_df = group.drop(columns=cols_to_drop, errors='ignore')
+            # --- Cleaning End ---
             
             save_df.to_csv(out_path, index=False)
             print(f"  -> Created {out_name} in lag_load/")

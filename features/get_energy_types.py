@@ -147,6 +147,29 @@ def fetch_fuel_type_data(start_year, output_dir):
                 # Pivot: Index=period, Columns=type-name, Values=value
                 df_pivot = df.pivot_table(index='period', columns='type-name', values='value', aggfunc='sum').reset_index()
                 
+                # --- Cleaning Start ---
+                # 1. Enforce Hourly Continuity
+                if not df_pivot.empty:
+                    # 'period' is string from API (YYYY-MM-DDTHH), convert to datetime
+                    df_pivot['period'] = pd.to_datetime(df_pivot['period'])
+                    df_pivot = df_pivot.sort_values('period')
+                    
+                    # Create full range for this month (or the range covered by data)
+                    # We want strictly hourly freq
+                    min_dt = df_pivot['period'].min()
+                    max_dt = df_pivot['period'].max()
+                    full_idx = pd.date_range(start=min_dt, end=max_dt, freq='h')
+                    
+                    df_pivot = df_pivot.set_index('period').reindex(full_idx)
+                    df_pivot.index.name = 'period'
+                    df_pivot = df_pivot.reset_index()
+                    
+                    # 2. Interpolate
+                    # Interpolate numeric columns (fuel types)
+                    numeric_cols = df_pivot.select_dtypes(include=['float64', 'int64']).columns
+                    df_pivot[numeric_cols] = df_pivot[numeric_cols].interpolate(method='linear', limit_direction='both')
+                # --- Cleaning End ---
+
                 # Fill NaNs with 0
                 df_pivot = df_pivot.fillna(0)
                 

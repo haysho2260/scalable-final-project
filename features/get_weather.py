@@ -57,7 +57,7 @@ def _append_monthly(base_dir: Path, df: pd.DataFrame) -> None:
 
 
 def get_historical_weather(
-    start_date: str = "2024-01-01",
+    start_date: str = "2019-01-01",
     end_date: str | None = None,
     latitude: float = LATITUDE,
     longitude: float = LONGITUDE,
@@ -119,8 +119,7 @@ def get_historical_weather(
             "wind_speed_10m_max",
             "wind_gusts_10m_max",
             "shortwave_radiation_sum",
-            "direct_radiation_sum",
-            "diffuse_radiation_sum",
+            "shortwave_radiation_sum",
             "cloudcover_mean",
             "et0_fao_evapotranspiration",
             "pressure_msl_mean",
@@ -174,21 +173,44 @@ def get_historical_weather(
         "wind_gusts_10m_max": daily.Variables(14).ValuesAsNumpy(),
         # solar shortwave (MJ/m²)
         "shortwave_radiation_sum": daily.Variables(15).ValuesAsNumpy(),
-        # direct radiation (MJ/m²)
-        "direct_radiation_sum": daily.Variables(16).ValuesAsNumpy(),
-        # diffuse radiation (MJ/m²)
-        "diffuse_radiation_sum": daily.Variables(17).ValuesAsNumpy(),
         # mean cloud cover (%)
-        "cloudcover_mean": daily.Variables(18).ValuesAsNumpy(),
+        "cloudcover_mean": daily.Variables(16).ValuesAsNumpy(),
         # ET0 (mm)
-        "et0_fao_evapotranspiration": daily.Variables(19).ValuesAsNumpy(),
+        "et0_fao_evapotranspiration": daily.Variables(17).ValuesAsNumpy(),
         # mean sea-level pressure (hPa)
-        "pressure_msl_mean": daily.Variables(20).ValuesAsNumpy(),
+        "pressure_msl_mean": daily.Variables(18).ValuesAsNumpy(),
         # weather condition code
-        "weathercode": daily.Variables(21).ValuesAsNumpy(),
+        "weathercode": daily.Variables(19).ValuesAsNumpy(),
     }
 
-    df = pd.DataFrame(data=daily_data).dropna()
+    df = pd.DataFrame(data=daily_data)
+    
+    # 1. Enforce Continuity & 2. Interpolate Missing Values
+    # Create complete date range
+    if not df.empty:
+        df = df.sort_values('date')
+        full_idx = pd.date_range(start=df['date'].min(), end=df['date'].max(), freq='D')
+        df = df.set_index('date').reindex(full_idx)
+        df.index.name = 'date'
+        df = df.reset_index()
+        
+        # Interpolate numeric columns
+        numeric_cols = df.select_dtypes(include=[np.number]).columns
+        df[numeric_cols] = df[numeric_cols].interpolate(method='linear', limit_direction='both')
+        
+        # Fill remaining NaNs (if any at edges) with ffill/bfill or 0
+        df[numeric_cols] = df[numeric_cols].ffill().bfill().fillna(0)
+
+    # 3. Sanity Checks / Clipping
+    # Humidity [0, 100]
+    rh_cols = [c for c in df.columns if 'relative_humidity' in c]
+    for c in rh_cols:
+        df[c] = df[c].clip(lower=0, upper=100)
+        
+    # Radiation >= 0
+    rad_cols = [c for c in df.columns if 'radiation' in c]
+    for c in rad_cols:
+        df[c] = df[c].clip(lower=0)
 
     # Degree days are strong predictors for load
     df["cdd"] = np.clip(df["temperature_2m_mean"] -
@@ -203,6 +225,16 @@ def get_historical_weather(
     combined = pd.concat([existing, df], ignore_index=True)
     combined["date"] = pd.to_datetime(combined["date"])
     combined = combined.drop_duplicates(subset="date").sort_values("date")
+    
+    # Final check on combined
+    combined_idx = pd.date_range(start=combined['date'].min(), end=combined['date'].max(), freq='D')
+    if len(combined) != len(combined_idx):
+        # Re-enforce continuity on master
+        combined = combined.set_index('date').reindex(combined_idx)
+        combined.index.name = 'date'
+        combined = combined.reset_index()
+        combined[numeric_cols] = combined[numeric_cols].interpolate(method='linear', limit_direction='both')
+        
     combined.to_csv(base_dir / "la_daily_weather_all.csv", index=False)
     return combined.reset_index(drop=True)
 

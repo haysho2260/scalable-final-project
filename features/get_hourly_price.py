@@ -2,7 +2,7 @@ import requests
 import pandas as pd
 import os
 import json
-
+from datetime import datetime
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -70,7 +70,21 @@ def fetch_eia_prices():
         df = df.rename(columns={'price': 'Monthly_Price_Cents_per_kWh'})
         df['Monthly_Price_Cents_per_kWh'] = pd.to_numeric(df['Monthly_Price_Cents_per_kWh'], errors='coerce')
         
-        return df[['Year', 'Month', 'Monthly_Price_Cents_per_kWh']]
+        df = df.sort_values(['Year', 'Month'])
+        
+        # 1. Robust Price: Forward Fill
+        # If a month is missing, use the previous month's price.
+        # First, ensure we have a continuous monthly index
+        min_date = df['period'].min()
+        max_date = df['period'].max()
+        full_idx = pd.date_range(start=min_date, end=max_date, freq='MS') # Month Start
+        
+        df = df.set_index('period').reindex(full_idx)
+        df['Year'] = df.index.year
+        df['Month'] = df.index.month
+        df['Monthly_Price_Cents_per_kWh'] = df['Monthly_Price_Cents_per_kWh'].ffill()
+        
+        return df[['Year', 'Month', 'Monthly_Price_Cents_per_kWh']].reset_index(drop=True)
 
     except Exception as e:
         print(f"Error fetching data: {e}")
@@ -325,6 +339,34 @@ def process_lag_prices():
         # Drop temp columns
         drop_cols = ['Daily_Date', 'TempYear', 'TempMonth', 'daily_mean_cost', 'daily_std_cost']
         final_df = final_df.drop(columns=drop_cols, errors='ignore')
+        
+        # --- Cleaning Start ---
+        # 2. Output Hourly Continuity (in features/lag_prices)
+        if not final_df.empty:
+            date_col_final = next((c for c in final_df.columns if 'date' in c.lower()), None)
+            if date_col_final:
+                final_df = final_df.sort_values(date_col_final)
+                
+                # Create strict hourly index for target month
+                min_dt = datetime(target_year, target_month, 1)
+                if target_month == 12:
+                    next_month = datetime(target_year + 1, 1, 1)
+                else:
+                    next_month = datetime(target_year, target_month + 1, 1)
+                # max_dt is end of month, exclusive of next month start
+                full_idx = pd.date_range(start=min_dt, end=next_month, freq='h', inclusive='left') # e.g. 2019-01-01 00:00 to 2019-01-31 23:00
+                
+                final_df = final_df.set_index(date_col_final).reindex(full_idx)
+                final_df.index.name = date_col_final
+                final_df = final_df.reset_index()
+                
+                # Interpolate numeric
+                numeric_cols = final_df.select_dtypes(include=['float64', 'int64']).columns
+                final_df[numeric_cols] = final_df[numeric_cols].interpolate(method='linear', limit_direction='both')
+                
+                # Fill remaining edge NaNs with 0
+                final_df[numeric_cols] = final_df[numeric_cols].fillna(0)
+        # --- Cleaning End ---
         
         # Save
         out_path = os.path.join(target_dir, f)

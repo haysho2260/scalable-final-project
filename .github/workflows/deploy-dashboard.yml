@@ -1,0 +1,109 @@
+name: deploy-dashboard
+
+on:
+  schedule:
+    # Weekly full retrain every Monday 08:00 UTC
+    - cron: "0 8 * * 1"
+    # Daily inference refresh at 07:00 UTC
+    - cron: "0 7 * * *"
+  push:
+    branches: [main]
+
+jobs:
+  train:
+    if: github.event_name == 'schedule' && github.event.schedule == '0 8 * * 1' || github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Check existing models
+        id: models
+        run: |
+          if [ -f model/daily_spend_model.pkl ] && [ -f model/monthly_spend_model.pkl ]; then
+            echo "models_present=true" >> $GITHUB_OUTPUT
+          else
+            echo "models_present=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Train models (weekly or when missing)
+        if: github.event_name == 'schedule' || steps.models.outputs.models_present == 'false'
+        run: python model/train.py --print-metrics
+
+      - name: Upload models artifact (optional cache)
+        if: github.event_name == 'schedule' || steps.models.outputs.models_present == 'false'
+        uses: actions/upload-artifact@v4
+        with:
+          name: trained-models
+          path: |
+            model/daily_spend_model.pkl
+            model/monthly_spend_model.pkl
+
+  inference:
+    needs: train
+    if: github.event_name == 'schedule' && github.event.schedule == '0 7 * * *' || github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Ensure models available
+        id: ensure_models
+        run: |
+          if [ ! -f model/daily_spend_model.pkl ] || [ ! -f model/monthly_spend_model.pkl ]; then
+            echo "models_missing=true" >> $GITHUB_OUTPUT
+          else
+            echo "models_missing=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Download models artifact if missing
+        if: steps.ensure_models.outputs.models_missing == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: trained-models
+          path: model
+
+      - name: Run inference (daily or on push if results missing)
+        run: python model/inference.py
+
+      - name: Build static dashboard
+        run: python dashboard/build_static.py
+
+      - name: Upload dashboard artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    needs: inference
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
+
