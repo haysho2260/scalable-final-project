@@ -43,10 +43,10 @@ def load_lag_prices() -> pd.DataFrame:
     df = _read_many(FEATURES_DIR / "lag_prices", "CAISO_Price")
     if df.empty:
         return df
-    df["timestamp"] = (
-        pd.to_datetime(df["Date"])
-        + pd.to_timedelta(df["HE"].astype(int) - 1, unit="h")
-    )
+    df["HE_num"] = pd.to_numeric(df["HE"], errors="coerce")
+    df = df.dropna(subset=["Date", "HE_num"])
+    df["timestamp"] = pd.to_datetime(
+        df["Date"]) + pd.to_timedelta(df["HE_num"] - 1, unit="h")
     df = df.sort_values("timestamp")
     return df
 
@@ -55,10 +55,10 @@ def load_lag_load() -> pd.DataFrame:
     df = _read_many(FEATURES_DIR / "lag_load", "CAISO_Load")
     if df.empty:
         return df
-    df["timestamp"] = (
-        pd.to_datetime(df["Date"])
-        + pd.to_timedelta(df["HE"].astype(int) - 1, unit="h")
-    )
+    df["HE_num"] = pd.to_numeric(df["HE"], errors="coerce")
+    df = df.dropna(subset=["Date", "HE_num"])
+    df["timestamp"] = pd.to_datetime(
+        df["Date"]) + pd.to_timedelta(df["HE_num"] - 1, unit="h")
     df = df.sort_values("timestamp")
     return df
 
@@ -87,7 +87,8 @@ def load_temperature_daily() -> pd.DataFrame:
 def build_hourly_dataset() -> pd.DataFrame:
     price = load_lag_prices()
     if price.empty:
-        raise FileNotFoundError("No lag price files found under features/lag_prices")
+        raise FileNotFoundError(
+            "No lag price files found under features/lag_prices")
 
     load = load_lag_load()
     mix = load_energy_mix()
@@ -136,7 +137,8 @@ def _train_and_eval(
     y = data[target_col]
 
     exclude = set(feature_exclude) | {target_col}
-    feature_cols = [c for c in data.columns if c not in exclude and pd.api.types.is_numeric_dtype(data[c])]
+    feature_cols = [
+        c for c in data.columns if c not in exclude and pd.api.types.is_numeric_dtype(data[c])]
     X = data[feature_cols].fillna(method="ffill").fillna(method="bfill")
 
     # Time-based split: last 20% for test
@@ -144,7 +146,8 @@ def _train_and_eval(
     X_train, X_test = X.iloc[:split_idx], X.iloc[split_idx:]
     y_train, y_test = y.iloc[:split_idx], y.iloc[split_idx:]
 
-    model = HistGradientBoostingRegressor(max_depth=8, max_iter=300, learning_rate=0.05)
+    model = HistGradientBoostingRegressor(
+        max_depth=8, max_iter=300, learning_rate=0.05)
     model.fit(X_train, y_train)
 
     preds = model.predict(X_test)
@@ -155,7 +158,8 @@ def _train_and_eval(
         "n_test": int(len(X_test)),
     }
     model_path.parent.mkdir(parents=True, exist_ok=True)
-    joblib.dump({"model": model, "features": feature_cols, "metrics": metrics}, model_path)
+    joblib.dump({"model": model, "features": feature_cols,
+                "metrics": metrics}, model_path)
     return model, metrics
 
 
@@ -163,7 +167,8 @@ def train_daily_and_monthly():
     hourly = build_hourly_dataset()
     target = "Estimated_Hourly_Cost_USD"
     if target not in hourly.columns:
-        raise ValueError(f"Target column '{target}' not found in hourly dataset.")
+        raise ValueError(
+            f"Target column '{target}' not found in hourly dataset.")
 
     # Daily aggregation
     hourly["date"] = pd.to_datetime(hourly["Date"])
@@ -219,8 +224,10 @@ def train_daily_and_monthly():
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Train daily and monthly residential spending models.")
-    parser.add_argument("--print-metrics", action="store_true", help="Print evaluation metrics after training.")
+    parser = argparse.ArgumentParser(
+        description="Train daily and monthly residential spending models.")
+    parser.add_argument("--print-metrics", action="store_true",
+                        help="Print evaluation metrics after training.")
     args = parser.parse_args()
 
     metrics = train_daily_and_monthly()
