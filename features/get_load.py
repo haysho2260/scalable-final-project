@@ -244,6 +244,178 @@ def download_and_process_file(file_url, target_dir):
     except Exception as e:
         print(f"  -> Failed to download/process {original_filename}: {e}")
 
+def process_lag_features(source_dir):
+    """
+    Loads monthly CSVs from source_dir, checks for missing files in features/lag_load,
+    loads necessary context (previous months), calculates lags, and saves to features/lag_load.
+    """
+    print("Processing lag features...")
+    
+    target_dir = os.path.join(os.path.dirname(source_dir), 'lag_load')
+    os.makedirs(target_dir, exist_ok=True)
+    
+    # 1. Identify source files and missing target files
+    source_files = [f for f in os.listdir(source_dir) if f.startswith("CAISO_Load_") and f.endswith(".csv")]
+    target_files = set(os.listdir(target_dir))
+    
+    missing_files = [f for f in source_files if f not in target_files]
+    
+    if not missing_files:
+        print("All lag feature files already exist. Skipping.")
+        return
+
+    print(f"Found {len(missing_files)} missing lag files: {missing_files[:5]}...")
+    
+    # 2. Determine required context
+    # We need to load missing months + enough previous data (context) to calculate max lag (30 days).
+    # Simplest approach: Identify the earliest missing month. Load everything from (Earliest Month - 2 Months) onwards.
+    # Why 2 months? To be safe for 30 day lag calc.
+    
+    # Parse filenames to get (Year, Month)
+    file_metadata = []
+    for f in source_files:
+        # Expected format: CAISO_Load_YYYY_MM.csv
+        try:
+            parts = f.replace("CAISO_Load_", "").replace(".csv", "").split("_")
+            year = int(parts[0])
+            month = int(parts[1])
+            file_metadata.append({'file': f, 'year': year, 'month': month})
+        except:
+            continue
+            
+    if not file_metadata:
+        return
+        
+    # Sort by time
+    file_metadata.sort(key=lambda x: (x['year'], x['month']))
+    
+    # Find index of earliest missing file
+    earliest_missing_idx = -1
+    for i, meta in enumerate(file_metadata):
+        if meta['file'] in missing_files:
+            earliest_missing_idx = i
+            break
+            
+    if earliest_missing_idx == -1:
+        return # Should capture above, but safety check.
+    
+    # Context start index: max(0, earliest_missing_idx - 2)
+    # We load 2 files back to ensure we have >30 days of history.
+    context_start_idx = max(0, earliest_missing_idx - 2)
+    files_to_load = file_metadata[context_start_idx:]
+    
+    print(f"Loading {len(files_to_load)} files (context + target) starting from {files_to_load[0]['file']}...")
+
+    df_list = []
+    for meta in files_to_load:
+        f_path = os.path.join(source_dir, meta['file'])
+        try:
+            df = pd.read_csv(f_path)
+            # Ensure Date parsing here to be safe
+            # We assume source files might or might not have lags already if we ran previous version. 
+            # But we are re-calculating or calculating fresh.
+            df_list.append(df)
+        except Exception as e:
+            print(f"Error reading {f_path}: {e}")
+            
+    if not df_list:
+        return
+
+    full_df = pd.concat(df_list, ignore_index=True)
+    
+    # 3. Prepare Date column (Robust parsing)
+    date_col = None
+    for col in full_df.columns:
+        if 'date' in str(col).lower():
+            date_col = col
+            break
+            
+    if not date_col:
+         # Fallback
+         if 'Date' in full_df.columns: date_col = 'Date'
+         elif 'OPR_DT' in full_df.columns: date_col = 'OPR_DT'
+    
+    if not date_col:
+        print("Could not find Date column.")
+        return
+
+    full_df[date_col] = pd.to_datetime(full_df[date_col], errors='coerce')
+    full_df = full_df.dropna(subset=[date_col])
+    full_df = full_df.sort_values(date_col)
+    
+    full_df['Daily_Date'] = full_df[date_col].dt.date
+    
+    # 4. Compute Daily Stats
+    load_col = 'CAISO Total'
+    if load_col not in full_df.columns:
+         print(f"Column '{load_col}' not found.")
+         return
+
+    # Group by Daily Date
+    daily_stats = full_df.groupby('Daily_Date')[load_col].agg(['mean', 'std']).reset_index()
+    daily_stats.columns = ['Daily_Date', 'daily_mean_load', 'daily_std_load']
+    daily_stats['Daily_Date'] = pd.to_datetime(daily_stats['Daily_Date'])
+    
+    # 5. Create Lags
+    lags = [1, 7, 15, 30]
+    for lag in lags:
+        daily_stats[f'daily_mean_load_lag_{lag}'] = daily_stats['daily_mean_load'].shift(lag)
+        daily_stats[f'daily_std_load_lag_{lag}'] = daily_stats['daily_std_load'].shift(lag)
+        
+    full_df['Daily_Date'] = pd.to_datetime(full_df['Daily_Date'])
+    
+    # Drop existing lag columns if they exist to avoid _x, _y duplicates
+    cols_to_drop = [c for c in full_df.columns if 'daily_mean_load' in c or 'daily_std_load' in c]
+    if cols_to_drop:
+        full_df = full_df.drop(columns=cols_to_drop)
+
+    full_df = pd.merge(full_df, daily_stats, on='Daily_Date', how='left')
+    
+    # 6. Save relevant files
+    # Only save the files that were in 'missing_files'
+    
+    full_df['TempYear'] = full_df[date_col].dt.year
+    full_df['TempMonth'] = full_df[date_col].dt.month
+    
+    groups = full_df.groupby(['TempYear', 'TempMonth'])
+    
+    print("Saving new lag feature files...")
+    for (year, month), group in groups:
+        out_name = f"CAISO_Load_{year}_{int(month):02d}.csv"
+        
+        # Only save if it matches a missing file
+        if out_name in missing_files:
+            out_path = os.path.join(target_dir, out_name)
+            
+            # Drop temp columns
+            cols_to_drop = ['Daily_Date', 'TempYear', 'TempMonth', 'daily_mean_load', 'daily_std_load']
+            
+            # Also drop garbage columns identified by user (Unnamed, HR, CAISO, Spring DST notes)
+            # Use simple string matching for robustness
+            garbage_patterns = ['unnamed', 'hr', 'caiso', 'spring dst'] 
+            for c in group.columns:
+                c_lower = str(c).lower()
+                if any(p in c_lower for p in garbage_patterns) and c != 'CAISO Total': # Keep CAISO Total!
+                     # Careful: matches 'HR' in 'CHR'? No, 'hr' in 'hr' yes.
+                     # 'CAISO' matches 'CAISO Total'. Correct logic needed.
+                     # Unnamed is safe.
+                     # HR might be a valid column? Usually headers are PGE, SCE etc. HR might be 'Hour'?
+                     # But raw data uses 'HE' (Hour Ending). 'HR' is likely extra header.
+                     # 'CAISO' matches 'CAISO Total'.
+                     
+                     is_garbage = False
+                     if 'unnamed' in c_lower: is_garbage = True
+                     elif c in ['HR', 'CAISO']: is_garbage = True # Exact match for these likely garbage headers
+                     elif 'spring dst' in c_lower: is_garbage = True
+                     
+                     if is_garbage:
+                         cols_to_drop.append(c)
+
+            save_df = group.drop(columns=cols_to_drop, errors='ignore')
+            
+            save_df.to_csv(out_path, index=False)
+            print(f"  -> Created {out_name} in lag_load/")
+
 def get_hourly_load():
     """
     Main function to scrape, download, and standardizes historical EMS hourly load data.
@@ -262,6 +434,9 @@ def get_hourly_load():
     # Process each file
     for url in file_urls:
         download_and_process_file(url, target_dir)
+        
+    # Process features
+    process_lag_features(target_dir)
 
 if __name__ == "__main__":
     get_hourly_load()
