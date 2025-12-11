@@ -100,7 +100,7 @@ def get_historical_weather(
     params = {
         "latitude": latitude,
         "longitude": longitude,
-        "start_date": start_date,
+        "start_date": fetch_start,
         "end_date": end_date,
         "daily": [
             "temperature_2m_mean",
@@ -118,7 +118,6 @@ def get_historical_weather(
             "snowfall_sum",
             "wind_speed_10m_max",
             "wind_gusts_10m_max",
-            "shortwave_radiation_sum",
             "shortwave_radiation_sum",
             "cloudcover_mean",
             "et0_fao_evapotranspiration",
@@ -184,20 +183,22 @@ def get_historical_weather(
     }
 
     df = pd.DataFrame(data=daily_data)
-    
+
     # 1. Enforce Continuity & 2. Interpolate Missing Values
     # Create complete date range
     if not df.empty:
         df = df.sort_values('date')
-        full_idx = pd.date_range(start=df['date'].min(), end=df['date'].max(), freq='D')
+        full_idx = pd.date_range(
+            start=df['date'].min(), end=df['date'].max(), freq='D')
         df = df.set_index('date').reindex(full_idx)
         df.index.name = 'date'
         df = df.reset_index()
-        
+
         # Interpolate numeric columns
         numeric_cols = df.select_dtypes(include=[np.number]).columns
-        df[numeric_cols] = df[numeric_cols].interpolate(method='linear', limit_direction='both')
-        
+        df[numeric_cols] = df[numeric_cols].interpolate(
+            method='linear', limit_direction='both')
+
         # Fill remaining NaNs (if any at edges) with ffill/bfill or 0
         df[numeric_cols] = df[numeric_cols].ffill().bfill().fillna(0)
 
@@ -206,7 +207,7 @@ def get_historical_weather(
     rh_cols = [c for c in df.columns if 'relative_humidity' in c]
     for c in rh_cols:
         df[c] = df[c].clip(lower=0, upper=100)
-        
+
     # Radiation >= 0
     rad_cols = [c for c in df.columns if 'radiation' in c]
     for c in rad_cols:
@@ -225,16 +226,20 @@ def get_historical_weather(
     combined = pd.concat([existing, df], ignore_index=True)
     combined["date"] = pd.to_datetime(combined["date"])
     combined = combined.drop_duplicates(subset="date").sort_values("date")
-    
+
     # Final check on combined
-    combined_idx = pd.date_range(start=combined['date'].min(), end=combined['date'].max(), freq='D')
+    combined_idx = pd.date_range(
+        start=combined['date'].min(), end=combined['date'].max(), freq='D')
     if len(combined) != len(combined_idx):
         # Re-enforce continuity on master
         combined = combined.set_index('date').reindex(combined_idx)
         combined.index.name = 'date'
         combined = combined.reset_index()
-        combined[numeric_cols] = combined[numeric_cols].interpolate(method='linear', limit_direction='both')
-        
+        combined[numeric_cols] = combined[numeric_cols].interpolate(
+            method='linear', limit_direction='both')
+
+    # Write date as ISO for downstream consistency
+    combined["date"] = combined["date"].dt.strftime("%Y-%m-%d")
     combined.to_csv(base_dir / "la_daily_weather_all.csv", index=False)
     return combined.reset_index(drop=True)
 
