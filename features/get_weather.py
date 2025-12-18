@@ -64,7 +64,7 @@ def get_historical_weather(
     save_path: str | None = None,
     cdd_hdd_base_c: float = CDD_HDD_BASE_C,
 ) -> pd.DataFrame:
-    """Download daily weather features starting Jan 1 2024 and save to monthly CSVs."""
+    """Download daily weather features starting 2019-01-01 and save to monthly CSVs."""
 
     # Default end date is today in ISO format
     if end_date is None:
