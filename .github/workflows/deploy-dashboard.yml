@@ -27,6 +27,15 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      - name: Refresh feature data (load, energy mix, weather, prices)
+        env:
+          EIA_API_KEY: ${{ secrets.EIA_API_KEY }}
+        run: |
+          python features/get_load.py
+          python features/get_energy_types.py --start_year 2019
+          python features/get_weather.py
+          python features/get_hourly_price.py
+
       - name: Check existing models
         id: models
         run: |
@@ -106,4 +115,3 @@ jobs:
     steps:
       - id: deployment
         uses: actions/deploy-pages@v4
-
