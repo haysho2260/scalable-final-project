@@ -116,6 +116,10 @@ def build_hourly_dataset() -> pd.DataFrame:
     # Merge temperature daily on date
     temp = load_temperature_daily()
     if not temp.empty:
+        # Normalize date types to datetime64[ns] (no time component) on both sides
+        temp["date"] = pd.to_datetime(
+            temp["date"], errors="coerce").dt.normalize()
+        df["Date"] = pd.to_datetime(df["Date"], errors="coerce").dt.normalize()
         temp_cols = [c for c in temp.columns if c != "date"]
         df = df.merge(
             temp.rename(columns={"date": "Date"}),
