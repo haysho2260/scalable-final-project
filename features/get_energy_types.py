@@ -82,15 +82,9 @@ def fetch_fuel_type_data(start_year, output_dir):
                 "frequency": "hourly",
                 "data": ["value"],
                 "facets": {
-                    # 'CAL' often maps to CISO (CAISO) in fuel-type?
-                    "respondent": ["CISO"],
-                    # User said 'CAL', but EIA RTO dataset usually uses 'CISO' for CAISO.
-                    # Let's double check standard codes.
-                    # Actually, for "electricity/rto/fuel-type-data", the respondent is indeed typically a Balancing Authority like 'CISO'.
-                    # User request explicitly said "filtered to only have respondednt CAL".
-                    # 'CAL' might be valid or they might mean CISO.
-                    # Let's try 'CAL' as requested, if it returns empty we warn.
-                    "respondent": ["CAL"],
+                    # Accept both CISO and CAL respondents, restricted to California BA name
+                    "respondent": ["CISO", "CAL"],
+                    "respondent-name": ["California"],
                 },
                 "start": month_start_str,
                 "end": month_end_str,
@@ -136,9 +130,7 @@ def fetch_fuel_type_data(start_year, output_dir):
 
         if not all_rows:
             print(
-                f"  No data found for {year}-{month:02d}. (Check if respondent 'CAL' is correct?)")
-            # If 'CAL' yields nothing, maybe we should try 'CISO'?
-            # But adhering to user strict instruction for now.
+                f"  No data found for {year}-{month:02d}. (Check respondent/facets or EIA coverage for this period.)")
         else:
             # Process DataFrame
             df = pd.DataFrame(all_rows)

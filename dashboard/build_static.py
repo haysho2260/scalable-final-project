@@ -32,6 +32,12 @@ def build():
     html_parts = [
         "<html><head><title>Energy Spend Dashboard</title></head><body>",
         "<h1>Energy Spend Dashboard</h1>",
+        "<label for='granularity'>View:</label>",
+        "<select id='granularity'>"
+        "<option value='daily'>Daily</option>"
+        "<option value='monthly' selected>Monthly</option>"
+        "<option value='yearly'>Yearly</option>"
+        "</select>",
     ]
 
     if not preds.empty:
@@ -40,7 +46,8 @@ def build():
     else:
         html_parts.append("<p>No predictions available.</p>")
 
-    # Daily chart
+    # Daily section
+    html_parts.append("<div id='daily-section' style='display:none;'>")
     if not daily.empty and "Estimated_Hourly_Cost_USD" in daily:
         daily["date"] = pd.to_datetime(daily["date"])
         fig_daily = px.line(
@@ -52,14 +59,17 @@ def build():
         fig_daily.update_xaxes(rangeslider_visible=True)
         html_parts.append(fig_daily.to_html(
             full_html=False, include_plotlyjs="cdn"))
-        # Recent daily table (last 30)
-        html_parts.append("<h3>Recent Daily Spend (last 30 days)</h3>")
+        # Daily table (all rows)
+        html_parts.append("<h3>Daily Spend (all available)</h3>")
         html_parts.append(
-            daily.sort_values("date", ascending=False).head(
-                30).to_html(index=False)
+            daily.sort_values("date", ascending=False).to_html(index=False)
         )
+    else:
+        html_parts.append("<p>No daily history available.</p>")
+    html_parts.append("</div>")
 
-    # Monthly chart
+    # Monthly section
+    html_parts.append("<div id='monthly-section' style='display:block;'>")
     if not monthly.empty and "Estimated_Hourly_Cost_USD" in monthly:
         monthly["year_month_start"] = pd.to_datetime(
             monthly["year_month_start"])
@@ -72,16 +82,67 @@ def build():
         fig_month.update_xaxes(rangeslider_visible=True)
         html_parts.append(fig_month.to_html(
             full_html=False, include_plotlyjs="cdn"))
-        # Monthly table since 2024 (or earliest available if later)
-        cutoff = pd.Timestamp("2024-01-01")
-        monthly_2024 = monthly[monthly["year_month_start"] >= cutoff].copy()
-        if monthly_2024.empty:
-            monthly_2024 = monthly.copy()
-        html_parts.append("<h3>Monthly Spend (since 2024)</h3>")
+        html_parts.append("<h3>Monthly Spend (all available)</h3>")
         html_parts.append(
-            monthly_2024.sort_values("year_month_start", ascending=False)
+            monthly.sort_values("year_month_start", ascending=False)
             .to_html(index=False)
         )
+    else:
+        html_parts.append("<p>No monthly history available.</p>")
+    html_parts.append("</div>")
+
+    # Yearly section (aggregated from monthly)
+    html_parts.append("<div id='yearly-section' style='display:none;'>")
+    if not monthly.empty and "Estimated_Hourly_Cost_USD" in monthly:
+        monthly["year_month_start"] = pd.to_datetime(
+            monthly["year_month_start"])
+        monthly["year"] = monthly["year_month_start"].dt.year
+        yearly = (
+            monthly.groupby("year")
+            .agg(
+                {
+                    "Estimated_Hourly_Cost_USD": "sum",
+                    "CAISO Total": "mean",
+                    "Monthly_Price_Cents_per_kWh": "mean",
+                }
+            )
+            .reset_index()
+        )
+        fig_year = px.bar(
+            yearly,
+            x="year",
+            y="Estimated_Hourly_Cost_USD",
+            title="Yearly Spend (USD)",
+        )
+        html_parts.append(fig_year.to_html(
+            full_html=False, include_plotlyjs="cdn"))
+        html_parts.append("<h3>Yearly Spend (all available)</h3>")
+        html_parts.append(yearly.sort_values("year", ascending=False).to_html(index=False))
+    else:
+        html_parts.append("<p>No yearly history available.</p>")
+    html_parts.append("</div>")
+
+    # Simple JS to toggle sections based on dropdown
+    html_parts.append(
+        """
+<script>
+  const select = document.getElementById('granularity');
+  const sections = {
+    daily: document.getElementById('daily-section'),
+    monthly: document.getElementById('monthly-section'),
+    yearly: document.getElementById('yearly-section'),
+  };
+  function updateView() {
+    const val = select.value;
+    for (const key in sections) {
+      sections[key].style.display = key === val ? 'block' : 'none';
+    }
+  }
+  select.addEventListener('change', updateView);
+  updateView();
+</script>
+"""
+    )
 
     html_parts.append("</body></html>")
 
