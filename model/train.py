@@ -67,9 +67,11 @@ def load_energy_mix() -> pd.DataFrame:
     df = _read_many(FEATURES_DIR / "energy_types", "Fuel_Type")
     if df.empty:
         return df
-    df["timestamp"] = pd.to_datetime(df["period"])
+    # period may be in various datetime string formats; parse robustly
+    df["timestamp"] = pd.to_datetime(df["period"], errors="coerce")
+    df = df.dropna(subset=["timestamp"])
     df = df.drop(columns=["period"])
-    return df
+    return df.reset_index(drop=True)
 
 
 def load_temperature_daily() -> pd.DataFrame:
