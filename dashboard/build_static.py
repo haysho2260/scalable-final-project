@@ -72,11 +72,14 @@ def build():
         fig_month.update_xaxes(rangeslider_visible=True)
         html_parts.append(fig_month.to_html(
             full_html=False, include_plotlyjs="cdn"))
-        # Recent monthly table (last 12 months)
-        html_parts.append("<h3>Recent Monthly Spend (last 12 months)</h3>")
+        # Monthly table since 2024 (or earliest available if later)
+        cutoff = pd.Timestamp("2024-01-01")
+        monthly_2024 = monthly[monthly["year_month_start"] >= cutoff].copy()
+        if monthly_2024.empty:
+            monthly_2024 = monthly.copy()
+        html_parts.append("<h3>Monthly Spend (since 2024)</h3>")
         html_parts.append(
-            monthly.sort_values("year_month_start", ascending=False)
-            .head(12)
+            monthly_2024.sort_values("year_month_start", ascending=False)
             .to_html(index=False)
         )
 
