@@ -11,15 +11,22 @@ Results are written to `results/predictions.csv`.
 from __future__ import annotations
 
 from datetime import timedelta
-import pandas as pd
 from pathlib import Path
+import sys
 
+import pandas as pd
 import joblib
 from pandas.tseries.offsets import DateOffset
 
+ROOT = Path(__file__).resolve().parents[1]
+
+# Ensure project root is on sys.path so `model` package can be imported when
+# running this file as `python model/inference.py`.
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
 from model.train import build_hourly_dataset
 
-ROOT = Path(__file__).resolve().parents[1]
 RESULTS_DIR = ROOT / "results"
 DAILY_MODEL_PATH = ROOT / "model" / "daily_spend_model.pkl"
 MONTHLY_MODEL_PATH = ROOT / "model" / "monthly_spend_model.pkl"
