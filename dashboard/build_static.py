@@ -117,7 +117,8 @@ def build():
         html_parts.append(fig_year.to_html(
             full_html=False, include_plotlyjs="cdn"))
         html_parts.append("<h3>Yearly Spend (all available)</h3>")
-        html_parts.append(yearly.sort_values("year", ascending=False).to_html(index=False))
+        html_parts.append(yearly.sort_values(
+            "year", ascending=False).to_html(index=False))
     else:
         html_parts.append("<p>No yearly history available.</p>")
     html_parts.append("</div>")
