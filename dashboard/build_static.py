@@ -20,9 +20,20 @@ RESULTS_DIR = ROOT / "results"
 SITE_DIR = ROOT / "site"
 FEATURES_DIR = ROOT / "features"
 
+# California has approximately 13 million households (2020-2024 estimate)
+CA_HOUSEHOLDS = 13_000_000
+
 
 def _read_csv(path: Path) -> pd.DataFrame:
     return pd.read_csv(path) if path.exists() else pd.DataFrame()
+
+
+def _normalize_to_per_household(df: pd.DataFrame, cost_col: str = "Estimated_Hourly_Cost_USD") -> pd.DataFrame:
+    """Convert system-wide costs to per-household costs."""
+    if cost_col in df.columns:
+        df = df.copy()
+        df[cost_col] = df[cost_col] / CA_HOUSEHOLDS
+    return df
 
 
 def _load_hourly_data() -> pd.DataFrame:
@@ -68,6 +79,14 @@ def build():
     daily = _read_csv(RESULTS_DIR / "daily_history.csv")
     monthly = _read_csv(RESULTS_DIR / "monthly_history.csv")
     hourly = _load_hourly_data()
+
+    # Normalize all costs to per-household
+    hourly = _normalize_to_per_household(hourly)
+    daily = _normalize_to_per_household(daily)
+    monthly = _normalize_to_per_household(monthly)
+    if not preds.empty and "prediction" in preds.columns:
+        preds = preds.copy()
+        preds["prediction"] = preds["prediction"] / CA_HOUSEHOLDS
 
     # Calculate weekly from daily
     weekly = pd.DataFrame()
@@ -117,7 +136,7 @@ def build():
     html_parts = [
         "<html>",
         "<head>",
-        "<title>Residential Energy Spending Dashboard</title>",
+        "<title>Residential Energy Spending per Household Dashboard</title>",
         "<link rel='stylesheet' href='https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css'>",
         "<script src='https://cdn.plot.ly/plotly-latest.min.js'></script>",
         "<style>",
@@ -135,7 +154,7 @@ def build():
         "</head>",
         "<body>",
         "<nav class='navbar navbar-dark bg-dark px-3 mb-3'>",
-        "<span class='navbar-brand'>Residential Energy Spending Dashboard</span>",
+        "<span class='navbar-brand'>Residential Energy Spending per Household</span>",
         "</nav>",
         "<div class='container-fluid'>",
         "<div class='row'>",
@@ -161,15 +180,15 @@ def build():
         if "avg_monthly" in insights:
             html_parts.append(
                 f"<div class='col-md-3 mb-3'><div class='stat-card'>"
-                f"<div class='text-muted small'>Avg Monthly</div>"
-                f"<div class='insight-value'>${insights['avg_monthly']:,.0f}</div>"
+                f"<div class='text-muted small'>Avg Monthly (per Household)</div>"
+                f"<div class='insight-value'>${insights['avg_monthly']:.2f}</div>"
                 f"</div></div>"
             )
         if "total_yearly" in insights and insights["total_yearly"]:
             html_parts.append(
                 f"<div class='col-md-3 mb-3'><div class='stat-card'>"
-                f"<div class='text-muted small'>Total Yearly</div>"
-                f"<div class='insight-value'>${insights['total_yearly']:,.0f}</div>"
+                f"<div class='text-muted small'>Total Yearly (per Household)</div>"
+                f"<div class='insight-value'>${insights['total_yearly']:.2f}</div>"
                 f"</div></div>"
             )
         if "peak_hour" in insights:
@@ -177,7 +196,7 @@ def build():
                 f"<div class='col-md-3 mb-3'><div class='stat-card'>"
                 f"<div class='text-muted small'>Peak Hour</div>"
                 f"<div class='insight-value'>{insights['peak_hour']}:00</div>"
-                f"<div class='small text-muted'>${insights['peak_hour_cost']:.2f}/hr</div>"
+                f"<div class='small text-muted'>${insights['peak_hour_cost']:.4f}/hr per household</div>"
                 f"</div></div>"
             )
         if "peak_month" in insights:
@@ -185,7 +204,7 @@ def build():
                 f"<div class='col-md-3 mb-3'><div class='stat-card'>"
                 f"<div class='text-muted small'>Peak Month</div>"
                 f"<div class='insight-value'>{insights['peak_month']}</div>"
-                f"<div class='small text-muted'>${insights['peak_month_cost']:,.0f}</div>"
+                f"<div class='small text-muted'>${insights['peak_month_cost']:.2f} per household</div>"
                 f"</div></div>"
             )
         html_parts.append("</div>")
@@ -220,17 +239,17 @@ def build():
                     x=hourly_pivot.columns.tolist(),
                     y=[str(d.date()) for d in hourly_pivot.index],
                     colorscale="Viridis",
-                    colorbar=dict(title="Cost (USD)")
+                    colorbar=dict(title="Cost per Household (USD)")
                 ))
                 fig_hourly.update_layout(
-                    title="Hourly Residential Spending Heatmap (Cost per Hour)",
+                    title="Hourly Residential Spending per Household (Cost per Hour)",
                     xaxis_title="Hour of Day",
                     yaxis_title="Date",
                     height=600,
                     xaxis=dict(dtick=1)
                 )
                 html_parts.append(
-                    "<div class='card mb-3'><div class='card-header fw-semibold'>Hourly Spending Pattern</div><div class='card-body'>"
+                    "<div class='card mb-3'><div class='card-header fw-semibold'>Hourly Spending Pattern (per Household)</div><div class='card-body'>"
                 )
                 html_parts.append(fig_hourly.to_html(
                     full_html=False, include_plotlyjs=False))
@@ -243,9 +262,9 @@ def build():
             "hour")["Estimated_Hourly_Cost_USD"].mean().reset_index()
         fig_hour_avg = px.bar(
             hourly_avg, x="hour", y="Estimated_Hourly_Cost_USD",
-            title="Average Residential Cost per Hour of Day",
+            title="Average Residential Cost per Household per Hour of Day",
             labels={"hour": "Hour of Day",
-                    "Estimated_Hourly_Cost_USD": "Cost (USD)"}
+                    "Estimated_Hourly_Cost_USD": "Cost per Household (USD)"}
         )
         fig_hour_avg.update_xaxes(dtick=1)
         html_parts.append(
@@ -260,10 +279,10 @@ def build():
             html_parts.append(
                 f"<div class='card mb-3 insight-card'><div class='card-body'>"
                 f"<h6 class='text-primary'>💡 Focus Area: Peak Hours</h6>"
-                f"<p>Peak spending occurs at <strong>{insights['peak_hour']}:00</strong> "
-                f"(${insights['peak_hour_cost']:.2f}/hr) vs off-peak at <strong>{insights['off_peak_hour']}:00</strong> "
-                f"(${insights['off_peak_cost']:.2f}/hr).</p>"
-                f"<p class='mb-0'><strong>Action:</strong> Shift high-energy activities (laundry, charging) to off-peak hours to save up to ${(insights['peak_hour_cost'] - insights['off_peak_cost']) * 24 * 30:,.0f}/month.</p>"
+                f"<p>Peak spending per household occurs at <strong>{insights['peak_hour']}:00</strong> "
+                f"(${insights['peak_hour_cost']:.4f}/hr) vs off-peak at <strong>{insights['off_peak_hour']}:00</strong> "
+                f"(${insights['off_peak_cost']:.4f}/hr).</p>"
+                f"<p class='mb-0'><strong>Action:</strong> Shift high-energy activities (laundry, charging) to off-peak hours to save up to ${(insights['peak_hour_cost'] - insights['off_peak_cost']) * 24 * 30:,.2f}/month per household.</p>"
                 f"</div></div>"
             )
     else:
@@ -277,9 +296,9 @@ def build():
         daily["date"] = pd.to_datetime(daily["date"])
         fig_daily = px.line(
             daily.sort_values("date"), x="date", y="Estimated_Hourly_Cost_USD",
-            title="Daily Residential Spending",
+            title="Daily Residential Spending per Household",
             labels={"date": "Date",
-                    "Estimated_Hourly_Cost_USD": "Cost per Day (USD)"}
+                    "Estimated_Hourly_Cost_USD": "Cost per Household per Day (USD)"}
         )
         fig_daily.update_xaxes(rangeslider_visible=True)
         html_parts.append(
@@ -300,9 +319,9 @@ def build():
         daily_avg = daily_avg.sort_values("day_name")
         fig_day_avg = px.bar(
             daily_avg, x="day_name", y="Estimated_Hourly_Cost_USD",
-            title="Average Residential Cost by Day of Week",
+            title="Average Residential Cost per Household by Day of Week",
             labels={"day_name": "Day",
-                    "Estimated_Hourly_Cost_USD": "Cost per Day (USD)"}
+                    "Estimated_Hourly_Cost_USD": "Cost per Household per Day (USD)"}
         )
         html_parts.append(
             "<div class='card mb-3'><div class='card-header fw-semibold'>Average Cost by Day of Week</div><div class='card-body'>"
@@ -316,8 +335,8 @@ def build():
             html_parts.append(
                 f"<div class='card mb-3 insight-card'><div class='card-body'>"
                 f"<h6 class='text-primary'>💡 Focus Area: Peak Days</h6>"
-                f"<p>Peak spending occurs on <strong>{insights['peak_day']}s</strong> "
-                f"(${insights['peak_day_cost']:,.0f}/day).</p>"
+                f"<p>Peak spending per household occurs on <strong>{insights['peak_day']}s</strong> "
+                f"(${insights['peak_day_cost']:.2f}/day).</p>"
                 f"<p class='mb-0'><strong>Action:</strong> Schedule energy-intensive activities on lower-cost days when possible.</p>"
                 f"</div></div>"
             )
@@ -330,9 +349,9 @@ def build():
     if not weekly.empty:
         fig_weekly = px.bar(
             weekly.sort_values("week_start"), x="week_start", y="Estimated_Hourly_Cost_USD",
-            title="Weekly Residential Spending",
+            title="Weekly Residential Spending per Household",
             labels={"week_start": "Week Starting",
-                    "Estimated_Hourly_Cost_USD": "Cost per Week (USD)"}
+                    "Estimated_Hourly_Cost_USD": "Cost per Household per Week (USD)"}
         )
         html_parts.append(
             "<div class='card mb-3'><div class='card-header fw-semibold'>Weekly Spending</div><div class='card-body'>"
@@ -346,9 +365,10 @@ def build():
         )
         weekly_display = weekly[["week_start",
                                  "Estimated_Hourly_Cost_USD"]].copy()
-        weekly_display.columns = ["Week Starting", "Total Cost (USD)"]
-        weekly_display["Total Cost (USD)"] = weekly_display["Total Cost (USD)"].apply(
-            lambda x: f"${x:,.0f}")
+        weekly_display.columns = ["Week Starting",
+                                  "Total Cost per Household (USD)"]
+        weekly_display["Total Cost per Household (USD)"] = weekly_display["Total Cost per Household (USD)"].apply(
+            lambda x: f"${x:.2f}")
         html_parts.append(
             weekly_display.sort_values("Week Starting", ascending=False).to_html(
                 index=False, classes="table table-sm table-striped table-hover mb-0"
@@ -367,9 +387,9 @@ def build():
             monthly["year_month_start"])
         fig_month = px.bar(
             monthly.sort_values("year_month_start"), x="year_month_start", y="Estimated_Hourly_Cost_USD",
-            title="Monthly Residential Spending",
+            title="Monthly Residential Spending per Household",
             labels={"year_month_start": "Month",
-                    "Estimated_Hourly_Cost_USD": "Cost per Month (USD)"}
+                    "Estimated_Hourly_Cost_USD": "Cost per Household per Month (USD)"}
         )
         fig_month.update_xaxes(rangeslider_visible=True)
         html_parts.append(
@@ -390,9 +410,9 @@ def build():
         monthly_avg = monthly_avg.sort_values("month_name")
         fig_month_avg = px.bar(
             monthly_avg, x="month_name", y="Estimated_Hourly_Cost_USD",
-            title="Average Residential Cost by Month",
+            title="Average Residential Cost per Household by Month",
             labels={"month_name": "Month",
-                    "Estimated_Hourly_Cost_USD": "Cost per Month (USD)"}
+                    "Estimated_Hourly_Cost_USD": "Cost per Household per Month (USD)"}
         )
         html_parts.append(
             "<div class='card mb-3'><div class='card-header fw-semibold'>Average Cost by Month</div><div class='card-body'>"
@@ -406,8 +426,8 @@ def build():
             html_parts.append(
                 f"<div class='card mb-3 insight-card'><div class='card-body'>"
                 f"<h6 class='text-primary'>💡 Focus Area: Peak Months</h6>"
-                f"<p>Peak spending occurs in <strong>{insights['peak_month']}</strong> "
-                f"(${insights['peak_month_cost']:,.0f}/month).</p>"
+                f"<p>Peak spending per household occurs in <strong>{insights['peak_month']}</strong> "
+                f"(${insights['peak_month_cost']:.2f}/month).</p>"
                 f"<p class='mb-0'><strong>Action:</strong> Plan major energy-intensive activities (HVAC maintenance, insulation upgrades) before peak months to reduce costs.</p>"
                 f"</div></div>"
             )
@@ -451,9 +471,9 @@ def build():
 
         fig_year = px.bar(
             yearly, x="year_label", y="Estimated_Hourly_Cost_USD",
-            title="Yearly Residential Spending",
+            title="Yearly Residential Spending per Household",
             labels={"year_label": "Year",
-                    "Estimated_Hourly_Cost_USD": "Cost per Year (USD)"}
+                    "Estimated_Hourly_Cost_USD": "Cost per Household per Year (USD)"}
         )
         html_parts.append(
             "<div class='card mb-3'><div class='card-header fw-semibold'>Yearly Spending</div><div class='card-body'>"
@@ -466,8 +486,8 @@ def build():
         display_yearly = yearly_sorted[[
             "year_label", "Estimated_Hourly_Cost_USD", "Monthly_Price_Cents_per_kWh", "month_count"]].copy()
         display_yearly.columns = [
-            "Year", "Total Cost (USD)", "Avg Price (cents/kWh)", "Months"]
-        display_yearly["Total Cost (USD)"] = display_yearly["Total Cost (USD)"].apply(
+            "Year", "Total Cost per Household (USD)", "Avg Price (cents/kWh)", "Months"]
+        display_yearly["Total Cost per Household (USD)"] = display_yearly["Total Cost per Household (USD)"].apply(
             lambda x: f"${x:,.0f}")
         html_parts.append(
             "<div class='card mb-3'><div class='card-header fw-semibold'>Yearly Summary</div><div class='card-body table-responsive'>"
