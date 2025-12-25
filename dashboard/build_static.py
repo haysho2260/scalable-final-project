@@ -33,12 +33,14 @@ def build():
         "<html>",
         "<head>",
         "<title>Energy Spend Dashboard</title>",
-        "<link rel='stylesheet' href='https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap@5.3.0/dist/css/bootstrap.min.css'>",
+        "<link rel='stylesheet' href='https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css'>",
         "<style>",
         "body { font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }",
-        ".sidebar { background-color: #111827; color: #e5e7eb; min-height: 100vh; }",
-        ".sidebar h6 { font-size: 0.75rem; letter-spacing: .08em; text-transform: uppercase; color: #9ca3af; }",
-        ".sidebar .form-label { font-size: 0.8rem; color: #d1d5db; }",
+        ".sidebar { background-color: #111827; color: #e5e7eb; min-height: 100vh; padding: 1rem; }",
+        ".sidebar h6 { font-size: 0.75rem; letter-spacing: .08em; text-transform: uppercase; color: #9ca3af; margin-bottom: 1rem; }",
+        ".sidebar .form-label { font-size: 0.8rem; color: #d1d5db; margin-bottom: 0.5rem; }",
+        ".sidebar .form-select { background-color: #1f2937; border-color: #374151; color: #e5e7eb; }",
+        ".sidebar .form-select:focus { background-color: #1f2937; border-color: #4b5563; color: #e5e7eb; }",
         "table { font-size: 0.8rem; }",
         "</style>",
         "</head>",
@@ -48,7 +50,7 @@ def build():
         "</nav>",
         "<div class='container-fluid'>",
         "<div class='row'>",
-        "<aside class='col-md-3 col-lg-2 sidebar py-3 d-none d-md-block'>",
+        "<aside class='col-md-3 col-lg-2 sidebar d-none d-md-block'>",
         "<h6 class='mb-3'>Controls</h6>",
         "<div class='mb-3'>",
         "<label for='granularity' class='form-label mb-1'>Granularity</label>",
@@ -146,6 +148,14 @@ def build():
         monthly["year_month_start"] = pd.to_datetime(
             monthly["year_month_start"])
         monthly["year"] = monthly["year_month_start"].dt.year
+        monthly["month"] = monthly["year_month_start"].dt.month
+
+        # Count months per year and determine label
+        month_counts = monthly.groupby("year")["month"].agg(
+            ["count", "min", "max"]).reset_index()
+        month_counts.columns = [
+            "year", "month_count", "min_month", "max_month"]
+
         yearly = (
             monthly.groupby("year")
             .agg(
@@ -157,11 +167,33 @@ def build():
             )
             .reset_index()
         )
+
+        # Merge month counts and create labels
+        yearly = yearly.merge(month_counts, on="year")
+
+        # Create year labels: full year or partial with month range
+        def make_year_label(row):
+            if row["month_count"] == 12:
+                return str(int(row["year"]))
+            else:
+                month_names = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                               "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+                min_name = month_names[int(row["min_month"]) - 1]
+                max_name = month_names[int(row["max_month"]) - 1]
+                return f"{int(row['year'])} ({min_name}-{max_name})"
+
+        yearly["year_label"] = yearly.apply(make_year_label, axis=1)
+
+        # Only show years with at least 6 months (half year)
+        yearly = yearly[yearly["month_count"] >= 6].copy()
+
         fig_year = px.bar(
             yearly,
-            x="year",
+            x="year_label",
             y="Estimated_Hourly_Cost_USD",
             title="Yearly Spend (USD)",
+            labels={"year_label": "Year",
+                    "Estimated_Hourly_Cost_USD": "Spend (USD)"},
         )
         html_parts.append(
             "<div class='card mb-3'><div class='card-header fw-semibold'>Yearly Spend</div><div class='card-body'>"
@@ -173,8 +205,14 @@ def build():
         html_parts.append(
             "<div class='card mb-3'><div class='card-header fw-semibold'>Yearly Spend (all available)</div><div class='card-body table-responsive'>"
         )
+        # Sort by year, then create display table with year_label instead of year
+        yearly_sorted = yearly.sort_values("year", ascending=False)
+        display_yearly = yearly_sorted[["year_label", "Estimated_Hourly_Cost_USD",
+                                        "CAISO Total", "Monthly_Price_Cents_per_kWh", "month_count"]].copy()
+        display_yearly.columns = [
+            "Year", "Total Spend (USD)", "Avg Load (MW)", "Avg Price (cents/kWh)", "Months"]
         html_parts.append(
-            yearly.sort_values("year", ascending=False).to_html(
+            display_yearly.to_html(
                 index=False, classes="table table-sm table-striped table-hover mb-0"
             )
         )
