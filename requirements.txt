@@ -6,4 +6,8 @@ plotly
 openmeteo-requests
 requests-cache
 retry-requests
+beautifulsoup4
+requests
+python-dotenv
+openpyxl
 
