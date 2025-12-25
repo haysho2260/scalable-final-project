@@ -17,6 +17,7 @@ def fetch_eia_prices():
     if not api_key:
         print("Error: EIA_API_KEY not found in environment variables.")
         return None
+    api_key = api_key.strip()  # Remove any whitespace/newlines
 
     url = "https://api.eia.gov/v2/electricity/retail-sales/data/"
     params = {
@@ -212,8 +213,8 @@ def process_hourly_prices():
                     df['Monthly_Price_Cents_per_kWh'] = price
 
                     if 'CAISO Total' in df.columns:
-                    df['Estimated_Hourly_Cost_USD'] = df['CAISO Total'] * \
-                        1000 * (price / 100.0)
+                        df['Estimated_Hourly_Cost_USD'] = df['CAISO Total'] * \
+                            1000 * (price / 100.0)
                 else:
                     print(f"  Warning: No price found for {year}-{month}")
                     df['Monthly_Price_Cents_per_kWh'] = pd.NA

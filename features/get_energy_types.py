@@ -17,6 +17,7 @@ def fetch_fuel_type_data(start_year, output_dir):
     if not api_key:
         print("Error: EIA_API_KEY not found in environment variables.")
         return
+    api_key = api_key.strip()  # Remove any whitespace/newlines
 
     url = "https://api.eia.gov/v2/electricity/rto/fuel-type-data/data/"
     os.makedirs(output_dir, exist_ok=True)
