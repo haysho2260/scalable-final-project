@@ -11,7 +11,7 @@ on:
 
 jobs:
   train:
-    if: github.event_name == 'schedule' && github.event.schedule == '0 8 * * 1' || github.event_name == 'push'
+    # Always run this job, but conditionally train
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -36,6 +36,13 @@ jobs:
           python features/get_weather.py
           python features/get_hourly_price.py
 
+      - name: Download models from artifact (if available)
+        uses: actions/download-artifact@v4
+        with:
+          name: trained-models
+          path: model
+        continue-on-error: true
+
       - name: Check existing models
         id: models
         run: |
@@ -45,22 +52,42 @@ jobs:
             echo "models_present=false" >> $GITHUB_OUTPUT
           fi
 
-      - name: Train models (weekly or when missing)
-        if: github.event_name == 'schedule' || steps.models.outputs.models_present == 'false'
-        run: python model/train.py --print-metrics
+      - name: Train models (weekly schedule or when missing)
+        id: train_check
+        if: |
+          (github.event_name == 'schedule' && github.event.schedule == '0 8 * * 1') ||
+          (github.event_name == 'push' && steps.models.outputs.models_present == 'false')
+        run: |
+          python model/train.py --print-metrics
+          echo "trained=true" >> $GITHUB_OUTPUT
 
-      - name: Upload models artifact (optional cache)
-        if: github.event_name == 'schedule' || steps.models.outputs.models_present == 'false'
+      - name: Set trained flag if models already exist
+        if: steps.models.outputs.models_present == 'true'
+        run: |
+          echo "trained=false" >> $GITHUB_OUTPUT
+
+      - name: Upload models artifact (always upload if models exist)
+        if: steps.models.outputs.models_present == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: trained-models
           path: |
             model/daily_spend_model.pkl
             model/monthly_spend_model.pkl
+          retention-days: 7
+
+      - name: Fail if models missing and not training
+        if: |
+          steps.models.outputs.models_present == 'false' &&
+          !((github.event_name == 'schedule' && github.event.schedule == '0 8 * * 1') ||
+            (github.event_name == 'push'))
+        run: |
+          echo "ERROR: Models are missing and this is not a training run."
+          echo "Models will be trained on weekly schedule (Monday 08:00 UTC) or on push if missing."
+          exit 1
 
   inference:
     needs: train
-    if: github.event_name == 'schedule' && github.event.schedule == '0 7 * * *' || github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -76,21 +103,23 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Ensure models available
-        id: ensure_models
-        run: |
-          if [ ! -f model/daily_spend_model.pkl ] || [ ! -f model/monthly_spend_model.pkl ]; then
-            echo "models_missing=true" >> $GITHUB_OUTPUT
-          else
-            echo "models_missing=false" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Download models artifact if missing
-        if: steps.ensure_models.outputs.models_missing == 'true'
+      - name: Download models from train job artifact
         uses: actions/download-artifact@v4
         with:
           name: trained-models
           path: model
+        continue-on-error: true
+
+      - name: Verify models exist
+        run: |
+          if [ ! -f model/daily_spend_model.pkl ] || [ ! -f model/monthly_spend_model.pkl ]; then
+            echo "ERROR: Models not found. Models must be trained first."
+            echo "Training runs on:"
+            echo "  - Weekly schedule (Monday 08:00 UTC)"
+            echo "  - Push to main (if models are missing)"
+            exit 1
+          fi
+          echo "Models found, proceeding with inference..."
 
       - name: Run inference (daily or on push if results missing)
         run: python model/inference.py

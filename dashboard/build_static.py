@@ -37,9 +37,9 @@ def _normalize_to_per_household(df: pd.DataFrame, cost_col: str = "Estimated_Hou
 
 
 def _load_hourly_data() -> pd.DataFrame:
-    """Load hourly data from lag_prices files."""
+    """Load hourly data from hourly_price files."""
     hourly_files = sorted(
-        (FEATURES_DIR / "lag_prices").glob("CAISO_Price_*.csv"))
+        (FEATURES_DIR / "hourly_price").glob("CAISO_Price_*.csv"))
     if not hourly_files:
         return pd.DataFrame()
 
@@ -88,18 +88,19 @@ def build():
         preds = preds.copy()
         preds["prediction"] = preds["prediction"] / CA_HOUSEHOLDS
 
-    # Calculate weekly from daily
+    # Calculate weekly from daily - ensure proper week boundaries and seasonal variation
     weekly = pd.DataFrame()
     if not daily.empty and "Estimated_Hourly_Cost_USD" in daily:
         daily["date"] = pd.to_datetime(daily["date"])
-        daily["year"] = daily["date"].dt.year
-        daily["week"] = daily["date"].dt.isocalendar().week
+        # Get the Monday of each week (week start)
+        daily["week_start"] = daily["date"] - \
+            pd.to_timedelta(daily["date"].dt.dayofweek, unit="d")
+        # Group by week_start to get weekly totals (not cumulative)
         weekly = (
-            daily.groupby(["year", "week"])
-            .agg({"Estimated_Hourly_Cost_USD": "sum", "date": "min"})
+            daily.groupby("week_start")
+            .agg({"Estimated_Hourly_Cost_USD": "sum"})
             .reset_index()
-            .rename(columns={"date": "week_start"})
-            .sort_values("week_start", ascending=False)
+            .sort_values("week_start")
         )
 
     # Calculate insights
