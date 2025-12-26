@@ -9,6 +9,7 @@ Results are written to `results/predictions.csv`.
 """
 
 from __future__ import annotations
+from model.train import build_hourly_dataset
 
 
 from datetime import timedelta, datetime
@@ -26,7 +27,6 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from model.train import build_hourly_dataset
 
 RESULTS_DIR = ROOT / "results"
 HOURLY_MODEL_PATH = ROOT / "model" / "hourly_spend_model.pkl"
@@ -433,7 +433,7 @@ def run_inference():
     last_hourly_timestamp = pd.to_datetime(hourly_sorted["timestamp"].iloc[-1])
     last_daily_date = pd.to_datetime(daily["date"].iloc[-1])
     last_monthly_date = pd.to_datetime(monthly["year_month_start"].iloc[-1])
-    
+
     # Current time (round down to hour for hourly, day for daily, month for monthly)
     now = datetime.now()
     current_hour = now.replace(minute=0, second=0, microsecond=0)
@@ -447,7 +447,7 @@ def run_inference():
     if last_hourly_timestamp < pd.to_datetime(current_hour):
         hourly_df = hourly_sorted.rename(columns={"timestamp": "date"})
         current_pred_hour = last_hourly_timestamp + timedelta(hours=1)
-        
+
         while current_pred_hour <= pd.to_datetime(current_hour):
             pred = _predict_next(
                 hourly_model,
@@ -459,21 +459,21 @@ def run_inference():
                 target_date=current_pred_hour,
             )
             all_predictions.append(pred)
-            
+
             # Update hourly_df with the prediction for next iteration
             # Add a dummy row with the predicted timestamp for feature calculation
             new_row = hourly_df.iloc[-1:].copy()
             new_row["date"] = current_pred_hour
             new_row[TARGET_COL] = pred["prediction"].iloc[0]
             hourly_df = pd.concat([hourly_df, new_row], ignore_index=True)
-            
+
             current_pred_hour += timedelta(hours=1)
 
     # Daily predictions: from last day + 1 to current day
     if last_daily_date < pd.to_datetime(current_day):
         daily_df = daily.rename(columns={"date": "date"})
         current_pred_day = last_daily_date + timedelta(days=1)
-        
+
         while current_pred_day <= pd.to_datetime(current_day):
             pred = _predict_next(
                 daily_model,
@@ -485,20 +485,21 @@ def run_inference():
                 target_date=current_pred_day,
             )
             all_predictions.append(pred)
-            
+
             # Update daily_df with the prediction for next iteration
             new_row = daily_df.iloc[-1:].copy()
             new_row["date"] = current_pred_day
             new_row[TARGET_COL] = pred["prediction"].iloc[0]
             daily_df = pd.concat([daily_df, new_row], ignore_index=True)
-            
+
             current_pred_day += timedelta(days=1)
 
     # Monthly predictions: from last month + 1 to current month
     if last_monthly_date < pd.to_datetime(current_month):
         monthly_df = monthly.rename(columns={"year_month_start": "date"})
-        current_pred_month = pd.to_datetime(last_monthly_date) + DateOffset(months=1)
-        
+        current_pred_month = pd.to_datetime(
+            last_monthly_date) + DateOffset(months=1)
+
         while current_pred_month <= pd.to_datetime(current_month):
             pred = _predict_next(
                 monthly_model,
@@ -510,13 +511,13 @@ def run_inference():
                 target_date=current_pred_month,
             )
             all_predictions.append(pred)
-            
+
             # Update monthly_df with the prediction for next iteration
             new_row = monthly_df.iloc[-1:].copy()
             new_row["date"] = current_pred_month
             new_row[TARGET_COL] = pred["prediction"].iloc[0]
             monthly_df = pd.concat([monthly_df, new_row], ignore_index=True)
-            
+
             current_pred_month += DateOffset(months=1)
 
     if all_predictions:
@@ -549,8 +550,9 @@ def run_inference():
             "next_month",
             freq="M",
         )
-        results = pd.concat([next_hour_pred, next_day_pred, next_month_pred], ignore_index=True)
-    
+        results = pd.concat([next_hour_pred, next_day_pred,
+                            next_month_pred], ignore_index=True)
+
     out_path = RESULTS_DIR / "predictions.csv"
     results.to_csv(out_path, index=False)
     return out_path, results
