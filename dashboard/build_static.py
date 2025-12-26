@@ -9,6 +9,7 @@ Outputs a standalone HTML at `site/index.html` showing:
 from __future__ import annotations
 
 from pathlib import Path
+import json
 
 import pandas as pd
 import plotly.express as px
@@ -151,15 +152,26 @@ def build():
         ".insight-value { font-size: 1.5rem; font-weight: 600; color: #3b82f6; }",
         "table { font-size: 0.8rem; }",
         ".stat-card { background: white; border-radius: 8px; padding: 1rem; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }",
+        ".sidebar { position: fixed; left: 0; top: 56px; z-index: 1000; transition: transform 0.3s ease; width: 250px; }",
+        ".sidebar.hidden { transform: translateX(-100%); }",
+        ".hamburger-btn { background: none; border: none; color: white; font-size: 1.5rem; padding: 0.5rem; cursor: pointer; margin-right: 0.5rem; }",
+        ".hamburger-btn:hover { opacity: 0.8; }",
+        ".sidebar-overlay { display: none; position: fixed; top: 56px; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); z-index: 999; }",
+        ".sidebar-overlay.show { display: block; }",
+        "@media (min-width: 768px) { .sidebar-overlay { display: none !important; } }",
+        "main { transition: margin-left 0.3s ease; }",
+        "@media (min-width: 768px) { .sidebar:not(.hidden) + * { margin-left: 250px; } }",
         "</style>",
         "</head>",
         "<body>",
         "<nav class='navbar navbar-dark bg-dark px-3 mb-3'>",
-        "<span class='navbar-brand'>Residential Energy Spending per Household</span>",
+        "<button class='hamburger-btn' id='sidebar-toggle' aria-label='Toggle menu'>☰</button>",
+        "<span class='navbar-brand ms-2'>Residential Energy Spending per Household</span>",
         "</nav>",
+        "<div class='sidebar-overlay' id='sidebar-overlay'></div>",
         "<div class='container-fluid'>",
         "<div class='row'>",
-        "<aside class='col-md-3 col-lg-2 sidebar d-none d-md-block'>",
+        "<aside class='col-md-3 col-lg-2 sidebar' id='sidebar'>",
         "<h6>Time Period</h6>",
         "<div class='mb-3'>",
         "<label for='granularity' class='form-label'>View</label>",
@@ -292,23 +304,124 @@ def build():
             "<p class='text-muted'>No hourly data available.</p>")
     html_parts.append("</div>")
 
-    # Daily section
+    # Daily section - show hourly data for a selected day
     html_parts.append("<div id='daily-section' style='display:none;'>")
-    if not daily.empty and "Estimated_Hourly_Cost_USD" in daily:
+    if not hourly.empty and "Estimated_Hourly_Cost_USD" in hourly:
+        # Get available dates for the selector
+        hourly["date_only"] = hourly["timestamp"].dt.date
+        available_dates = sorted(hourly["date_only"].unique(), reverse=True)
+        default_date = available_dates[0] if len(available_dates) > 0 else None
+
+        # Create initial chart for default date
+        if default_date:
+            day_data = hourly[hourly["date_only"] == default_date].copy()
+            day_data = day_data.sort_values("timestamp")
+            day_data["hour_label"] = day_data["timestamp"].dt.strftime("%H:00")
+
+            fig_daily = px.line(
+                day_data, x="hour_label", y="Estimated_Hourly_Cost_USD",
+                title=f"Hourly Residential Spending per Household - {default_date}",
+                labels={"hour_label": "Hour of Day",
+                        "Estimated_Hourly_Cost_USD": "Cost per Household per Hour (USD)"},
+                markers=True
+            )
+            fig_daily.update_xaxes(dtick=2)
+            fig_daily.update_traces(line=dict(width=2))
+
+            html_parts.append(
+                "<div class='card mb-3'><div class='card-header fw-semibold'>Daily Spending by Hour</div><div class='card-body'>"
+            )
+            html_parts.append(
+                "<div class='mb-3'><label for='daily-date-select' class='form-label'>Select Date:</label>"
+                "<select id='daily-date-select' class='form-select form-select-sm' style='max-width: 200px;'>"
+            )
+            for date in available_dates:
+                selected = "selected" if date == default_date else ""
+                html_parts.append(
+                    f"<option value='{date}' {selected}>{date}</option>")
+            html_parts.append("</select></div>")
+            html_parts.append("<div id='daily-chart-container'>")
+            html_parts.append(fig_daily.to_html(
+                full_html=False, include_plotlyjs=False))
+            html_parts.append("</div></div></div>")
+
+            # Prepare data for JavaScript (properly format as JSON)
+            daily_data_json = {}
+            for date in available_dates:
+                day_data = hourly[hourly["date_only"] == date].copy()
+                day_data = day_data.sort_values("timestamp")
+                daily_data_json[str(date)] = {
+                    "hours": day_data["timestamp"].dt.strftime("%H:00").tolist(),
+                    "costs": [float(x) for x in day_data["Estimated_Hourly_Cost_USD"].tolist()]
+                }
+
+            # Add JavaScript to update chart when date changes
+            html_parts.append(f"""
+            <script>
+            const dailyData = {json.dumps(daily_data_json)};
+            const dateSelect = document.getElementById('daily-date-select');
+            const chartContainer = document.getElementById('daily-chart-container');
+            
+            dateSelect.addEventListener('change', function() {{
+                const selectedDate = dateSelect.value;
+                const data = dailyData[selectedDate];
+                
+                if (!data) {{
+                    chartContainer.innerHTML = '<p>No data available for this date.</p>';
+                    return;
+                }}
+                
+                const trace = {{
+                    x: data.hours,
+                    y: data.costs,
+                    type: 'scatter',
+                    mode: 'lines+markers',
+                    line: {{ width: 2 }},
+                    marker: {{ size: 6 }}
+                }};
+                
+                const layout = {{
+                    title: `Hourly Residential Spending per Household - ${{selectedDate}}`,
+                    xaxis: {{ title: 'Hour of Day', dtick: 2 }},
+                    yaxis: {{ title: 'Cost per Household per Hour (USD)' }},
+                    height: 400
+                }};
+                
+                Plotly.newPlot(chartContainer, [trace], layout, {{responsive: true}});
+            }});
+            </script>
+            """)
+        else:
+            html_parts.append(
+                "<p class='text-muted'>No hourly data available for daily view.</p>")
+    elif not daily.empty and "Estimated_Hourly_Cost_USD" in daily:
+        # Fallback to daily aggregated data if hourly not available
         daily["date"] = pd.to_datetime(daily["date"])
-        fig_daily = px.line(
-            daily.sort_values("date"), x="date", y="Estimated_Hourly_Cost_USD",
-            title="Daily Residential Spending per Household",
-            labels={"date": "Date",
-                    "Estimated_Hourly_Cost_USD": "Cost per Household per Day (USD)"}
-        )
-        fig_daily.update_xaxes(rangeslider_visible=True)
-        html_parts.append(
-            "<div class='card mb-3'><div class='card-header fw-semibold'>Daily Spending Trend</div><div class='card-body'>"
-        )
-        html_parts.append(fig_daily.to_html(
-            full_html=False, include_plotlyjs=False))
-        html_parts.append("</div></div>")
+        available_dates = sorted(daily["date"].dt.date.unique(), reverse=True)
+        default_date = available_dates[0] if len(available_dates) > 0 else None
+
+        if default_date:
+            html_parts.append(
+                "<div class='card mb-3'><div class='card-header fw-semibold'>Daily Spending</div><div class='card-body'>"
+            )
+            html_parts.append(
+                "<div class='mb-3'><label for='daily-date-select' class='form-label'>Select Date:</label>"
+                "<select id='daily-date-select' class='form-select form-select-sm' style='max-width: 200px;'>"
+            )
+            for date in available_dates:
+                selected = "selected" if date == default_date else ""
+                html_parts.append(
+                    f"<option value='{date}' {selected}>{date}</option>")
+            html_parts.append("</select></div>")
+            html_parts.append(
+                f"<p>Total cost for {default_date}: ${daily[daily['date'].dt.date == default_date]['Estimated_Hourly_Cost_USD'].iloc[0]:.2f}</p>"
+            )
+            html_parts.append("</div></div>")
+        else:
+            html_parts.append(
+                "<p class='text-muted'>No daily data available.</p>")
+    else:
+        html_parts.append("<p class='text-muted'>No daily data available.</p>")
 
         # Average by day of week
         daily["day_name"] = daily["date"].dt.day_name()
@@ -510,6 +623,38 @@ def build():
     # JavaScript for toggling
     html_parts.append("""
 <script>
+  // Sidebar toggle functionality
+  const sidebarToggle = document.getElementById('sidebar-toggle');
+  const sidebar = document.getElementById('sidebar');
+  const sidebarOverlay = document.getElementById('sidebar-overlay');
+  
+  function toggleSidebar() {
+    sidebar.classList.toggle('hidden');
+    if (window.innerWidth < 768) {
+      sidebarOverlay.classList.toggle('show');
+    }
+  }
+  
+  sidebarToggle.addEventListener('click', toggleSidebar);
+  if (sidebarOverlay) {
+    sidebarOverlay.addEventListener('click', toggleSidebar);
+  }
+  
+  // Initialize sidebar state - visible on desktop, hidden on mobile
+  function updateSidebarState() {
+    if (window.innerWidth >= 768) {
+      sidebar.classList.remove('hidden');
+      if (sidebarOverlay) sidebarOverlay.classList.remove('show');
+    } else {
+      sidebar.classList.add('hidden');
+      if (sidebarOverlay) sidebarOverlay.classList.remove('show');
+    }
+  }
+  
+  updateSidebarState();
+  window.addEventListener('resize', updateSidebarState);
+  
+  // Time period view toggling
   const select = document.getElementById('granularity');
   const sections = {
     hourly: document.getElementById('hourly-section'),
