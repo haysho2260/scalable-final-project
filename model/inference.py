@@ -9,7 +9,7 @@ Results are written to `results/predictions.csv`.
 """
 
 from __future__ import annotations
-from model.train import build_hourly_dataset
+
 
 from datetime import timedelta
 from pathlib import Path
@@ -26,6 +26,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from model.train import build_hourly_dataset
 
 RESULTS_DIR = ROOT / "results"
 HOURLY_MODEL_PATH = ROOT / "model" / "hourly_spend_model.pkl"
