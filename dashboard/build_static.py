@@ -169,24 +169,24 @@ def build():
         "<script src='https://cdn.plot.ly/plotly-latest.min.js'></script>",
         "<style>",
         "body { font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f8f9fa; }",
-        ".sidebar { background-color: #111827; color: #e5e7eb; min-height: 100vh; padding: 1rem; }",
+        ".navbar { z-index: 1030; }",
+        ".sidebar { background-color: #212529; color: #e5e7eb; min-height: calc(100vh - 56px); padding: 1rem; position: fixed; left: 0; top: 56px; z-index: 1020; transition: transform 0.3s ease; width: 250px; border-top: 1px solid rgba(255,255,255,0.1); }",
         ".sidebar h6 { font-size: 0.75rem; letter-spacing: .08em; text-transform: uppercase; color: #9ca3af; margin-bottom: 1rem; }",
         ".sidebar .form-label { font-size: 0.8rem; color: #d1d5db; margin-bottom: 0.5rem; }",
-        ".sidebar .form-select { background-color: #1f2937; border-color: #374151; color: #e5e7eb; }",
-        ".sidebar .form-select:focus { background-color: #1f2937; border-color: #4b5563; color: #e5e7eb; }",
+        ".sidebar .form-select { background-color: #343a40; border-color: #495057; color: #e5e7eb; }",
+        ".sidebar .form-select:focus { background-color: #343a40; border-color: #6c757d; color: #e5e7eb; }",
         ".insight-card { border-left: 4px solid #3b82f6; }",
         ".insight-value { font-size: 1.5rem; font-weight: 600; color: #3b82f6; }",
         "table { font-size: 0.8rem; }",
         ".stat-card { background: white; border-radius: 8px; padding: 1rem; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }",
-        ".sidebar { position: fixed; left: 0; top: 56px; z-index: 1000; transition: transform 0.3s ease; width: 250px; }",
         ".sidebar.hidden { transform: translateX(-100%); }",
         ".hamburger-btn { background: none; border: none; color: white; font-size: 1.5rem; padding: 0.5rem; cursor: pointer; margin-right: 0.5rem; }",
         ".hamburger-btn:hover { opacity: 0.8; }",
         ".sidebar-overlay { display: none; position: fixed; top: 56px; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); z-index: 999; }",
         ".sidebar-overlay.show { display: block; }",
         "@media (min-width: 768px) { .sidebar-overlay { display: none !important; } }",
+        "@media (min-width: 768px) { .sidebar { position: relative; top: 0; transform: none !important; width: auto; min-height: 100vh; border-top: none; } }",
         "main { transition: margin-left 0.3s ease; }",
-        "@media (min-width: 768px) { .sidebar:not(.hidden) + * { margin-left: 250px; } }",
         "</style>",
         "</head>",
         "<body>",
@@ -254,8 +254,17 @@ def build():
             "<div class='card mb-3'><div class='card-header fw-semibold'>Upcoming Predictions</div><div class='card-body'>"
         )
         preds_display = preds.copy()
-        preds_display["prediction"] = preds_display["prediction"].apply(
-            lambda x: f"${x:,.0f}")
+
+        def format_prediction(row):
+            pred_val = row["prediction"]
+            if row["for"] == "next_hour":
+                return f"${pred_val:.4f}"
+            elif row["for"] == "next_day":
+                return f"${pred_val:.2f}"
+            else:
+                return f"${pred_val:,.0f}"
+        preds_display["prediction"] = preds_display.apply(
+            format_prediction, axis=1)
         html_parts.append(
             preds_display.to_html(
                 index=False, classes="table table-sm table-striped mb-0")

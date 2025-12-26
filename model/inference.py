@@ -26,7 +26,6 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from model.train import build_hourly_dataset
 
 RESULTS_DIR = ROOT / "results"
 HOURLY_MODEL_PATH = ROOT / "model" / "hourly_spend_model.pkl"
@@ -140,6 +139,14 @@ def _predict_next(
         # Monthly: find same month from previous years
         similar_mask = df_dates.dt.month == next_date.month
         similar_rows = df[similar_mask]
+    elif freq.upper().startswith("H"):
+        # Hourly: find same hour of day, same day of week, same month from history
+        similar_mask = (
+            (df_dates.dt.month == next_date.month) &
+            (df_dates.dt.dayofweek == next_date.dayofweek) &
+            (df_dates.dt.hour == next_date.hour)
+        )
+        similar_rows = df[similar_mask]
     else:
         # Daily: find same day of week and same month from history
         similar_mask = (
@@ -177,7 +184,10 @@ def _predict_next(
 
     # Update temporal features based on next date
     if "hour" in next_row.columns:
-        if freq.upper().startswith("M"):
+        if freq.upper().startswith("H"):
+            # For hourly, use the actual next hour
+            next_row["hour"] = next_date.hour
+        elif freq.upper().startswith("M"):
             # For monthly, use average hour from similar months
             if not similar_rows.empty and "hour" in similar_rows.columns:
                 next_row["hour"] = similar_rows["hour"].mean()
@@ -233,6 +243,18 @@ def _predict_next(
                             base_col_clean = lag_1_col.replace("_lag_1", "")
                             if base_col_clean in lag_rows.columns:
                                 lag_value = lag_rows.iloc[-1][base_col_clean]
+            elif freq.upper().startswith("H"):
+                # Hourly: look back by hours
+                lag_date = next_date - timedelta(hours=lag_num)
+                df_dates = pd.to_datetime(df[date_col], errors="coerce")
+                lag_rows = df[df_dates <= lag_date]
+                if not lag_rows.empty:
+                    # Get the base feature value from that hour
+                    base_col = lag_col.replace("_lag_" + str(lag_num), "")
+                    if base_col in lag_rows.columns:
+                        lag_value = lag_rows.iloc[-1][base_col]
+                    elif lag_col in lag_rows.columns:
+                        lag_value = lag_rows.iloc[-1][lag_col]
             else:
                 # Daily: look back by days
                 lag_date = next_date - timedelta(days=lag_num)
