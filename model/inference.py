@@ -120,20 +120,52 @@ def _predict_next(
         # Period -> timestamp conversion handled upstream; here treat as pandas Period
         next_date = (last_date + 1).to_timestamp()
 
-    # For next period, update temporal features and use historical patterns
-    next_row = last_row.copy()
+    # Convert date_col to datetime for easier comparison
+    df_dates = pd.to_datetime(df[date_col], errors="coerce")
+    
+    # Find similar historical periods to use as a base
+    # For daily: same day of week, same month (from previous years)
+    # For monthly: same month from previous years
+    similar_rows = pd.DataFrame()
+    
+    if freq.upper().startswith("M"):
+        # Monthly: find same month from previous years
+        similar_mask = df_dates.dt.month == next_date.month
+        similar_rows = df[similar_mask]
+    else:
+        # Daily: find same day of week and same month from history
+        similar_mask = (
+            (df_dates.dt.month == next_date.month) & 
+            (df_dates.dt.dayofweek == next_date.dayofweek)
+        )
+        similar_rows = df[similar_mask]
+    
+    # Use the most recent similar row, or fall back to last row
+    if not similar_rows.empty:
+        # Use the most recent similar period (but not the exact same date)
+        base_row = similar_rows.iloc[-1].copy()
+    else:
+        # Fallback: use last row but we'll update features
+        base_row = last_row.copy()
+    
+    # Create next_row starting from base_row
+    next_row = base_row.copy()
     next_row[date_col] = next_date
     
     # Update temporal features based on next date
     if "hour" in next_row.columns:
-        # For daily predictions, use average hour of day; for monthly, use mean
         if freq.upper().startswith("M"):
-            next_row["hour"] = df["hour"].mean() if "hour" in df.columns else 12
+            # For monthly, use average hour from similar months
+            if not similar_rows.empty and "hour" in similar_rows.columns:
+                next_row["hour"] = similar_rows["hour"].mean()
+            else:
+                next_row["hour"] = df["hour"].mean() if "hour" in df.columns else 12
         else:
-            # For next day, use average hour from similar days of week
-            next_dow = next_date.dayofweek
-            similar_days = df[df["dayofweek"] == next_dow] if "dayofweek" in df.columns else df
-            next_row["hour"] = similar_days["hour"].mean() if "hour" in similar_days.columns else 12
+            # For daily, use average hour from similar days
+            if not similar_rows.empty and "hour" in similar_rows.columns:
+                next_row["hour"] = similar_rows["hour"].mean()
+            else:
+                next_row["hour"] = df["hour"].mean() if "hour" in df.columns else 12
     
     if "dayofweek" in next_row.columns:
         next_row["dayofweek"] = next_date.dayofweek
@@ -205,25 +237,31 @@ def _predict_next(
                 except:
                     pass
     
-    # Use historical averages for weather/temperature features if predicting future
-    # Look for similar dates in history (same month, similar day of week)
-    if freq.upper().startswith("D"):
-        try:
-            # Convert date_col to datetime if needed
-            df_dates = pd.to_datetime(df[date_col], errors="coerce")
-            similar_mask = (
-                (df_dates.dt.month == next_date.month) & 
-                (df_dates.dt.dayofweek == next_date.dayofweek)
-            )
-            similar_dates = df[similar_mask]
-            if len(similar_dates) > 0:
-                # Update temperature and weather features from similar historical dates
-                for col in features:
-                    if any(x in col.lower() for x in ["temp", "temperature", "cdd", "hdd", "humidity", "precipitation"]):
-                        if col in similar_dates.columns:
-                            next_row[col] = similar_dates[col].mean()
-        except:
-            pass
+    # Use historical values from similar periods (not just averages - use actual values for variation)
+    if not similar_rows.empty:
+        # Use the most recent similar period's actual values (gives natural variation)
+        # But if we have multiple similar periods, we can sample or use the most recent
+        similar_row_actual = similar_rows.iloc[-1].copy()
+        
+        # Update all features from similar historical periods (except lag features which are handled separately)
+        for col in features:
+            if "_lag_" not in col and col in similar_row_actual.columns:
+                # Use actual value from similar historical period (not average - this gives variation)
+                next_row[col] = similar_row_actual[col]
+    
+    # For features not yet set or missing, use recent averages
+    for col in features:
+        if col not in next_row.columns:
+            continue
+        col_val = next_row[col].iloc[0] if hasattr(next_row[col], 'iloc') else next_row[col]
+        if pd.isna(col_val):
+            if col in df.columns:
+                if freq.upper().startswith("M"):
+                    # Monthly: use average from last 12 months
+                    next_row[col] = df[col].tail(12).mean() if len(df) >= 12 else df[col].mean()
+                else:
+                    # Daily: use average from last 30 days
+                    next_row[col] = df[col].tail(30).mean() if len(df) >= 30 else df[col].mean()
     
     # Fill any remaining NaN features with recent averages
     for col in features:
