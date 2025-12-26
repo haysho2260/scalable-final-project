@@ -163,17 +163,6 @@ jobs:
         with:
           path: site
 
-      - name: Run inference (daily or on push if results missing)
-        run: python model/inference.py
-
-      - name: Build static dashboard
-        run: python dashboard/build_static.py
-
-      - name: Upload dashboard artifact
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: site
-
   deploy:
     needs: inference
     runs-on: ubuntu-latest
