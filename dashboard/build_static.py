@@ -304,32 +304,37 @@ def build():
             "<p class='text-muted'>No hourly data available.</p>")
     html_parts.append("</div>")
 
-    # Daily section - show hourly data for a selected day
+    # Daily section - show average hourly cost for a selected day
     html_parts.append("<div id='daily-section' style='display:none;'>")
-    if not hourly.empty and "Estimated_Hourly_Cost_USD" in hourly:
-        # Get available dates for the selector
-        hourly["date_only"] = hourly["timestamp"].dt.date
-        available_dates = sorted(hourly["date_only"].unique(), reverse=True)
+    if not daily.empty and "Estimated_Hourly_Cost_USD" in daily:
+        daily["date"] = pd.to_datetime(daily["date"])
+
+        # Calculate average hourly cost per day (daily total / 24 hours)
+        daily["avg_hourly_cost"] = daily["Estimated_Hourly_Cost_USD"] / 24.0
+
+        available_dates = sorted(daily["date"].dt.date.unique(), reverse=True)
         default_date = available_dates[0] if len(available_dates) > 0 else None
 
-        # Create initial chart for default date
         if default_date:
-            day_data = hourly[hourly["date_only"] == default_date].copy()
-            day_data = day_data.sort_values("timestamp")
-            day_data["hour_label"] = day_data["timestamp"].dt.strftime("%H:00")
+            default_avg = daily[daily["date"].dt.date ==
+                                default_date]["avg_hourly_cost"].iloc[0]
 
-            fig_daily = px.line(
-                day_data, x="hour_label", y="Estimated_Hourly_Cost_USD",
-                title=f"Hourly Residential Spending per Household - {default_date}",
-                labels={"hour_label": "Hour of Day",
-                        "Estimated_Hourly_Cost_USD": "Cost per Household per Hour (USD)"},
-                markers=True
+            # Create a bar chart showing average hourly cost for the selected day
+            fig_daily = go.Figure(data=[
+                go.Bar(x=[str(default_date)], y=[default_avg],
+                       marker_color='#3b82f6', text=[f"${default_avg:.4f}/hr"],
+                       textposition='outside')
+            ])
+            fig_daily.update_layout(
+                title=f"Average Hourly Cost per Household - {default_date}",
+                xaxis_title="Date",
+                yaxis_title="Average Cost per Hour (USD)",
+                height=400,
+                showlegend=False
             )
-            fig_daily.update_xaxes(dtick=2)
-            fig_daily.update_traces(line=dict(width=2))
 
             html_parts.append(
-                "<div class='card mb-3'><div class='card-header fw-semibold'>Daily Spending by Hour</div><div class='card-body'>"
+                "<div class='card mb-3'><div class='card-header fw-semibold'>Daily Average Hourly Cost</div><div class='card-body'>"
             )
             html_parts.append(
                 "<div class='mb-3'><label for='daily-date-select' class='form-label'>Select Date:</label>"
@@ -345,78 +350,50 @@ def build():
                 full_html=False, include_plotlyjs=False))
             html_parts.append("</div></div></div>")
 
-            # Prepare data for JavaScript (properly format as JSON)
-            daily_data_json = {}
+            # Prepare data for JavaScript
+            daily_avg_json = {}
             for date in available_dates:
-                day_data = hourly[hourly["date_only"] == date].copy()
-                day_data = day_data.sort_values("timestamp")
-                daily_data_json[str(date)] = {
-                    "hours": day_data["timestamp"].dt.strftime("%H:00").tolist(),
-                    "costs": [float(x) for x in day_data["Estimated_Hourly_Cost_USD"].tolist()]
-                }
+                avg_cost = daily[daily["date"].dt.date ==
+                                 date]["avg_hourly_cost"].iloc[0]
+                daily_avg_json[str(date)] = float(avg_cost)
 
             # Add JavaScript to update chart when date changes
             html_parts.append(f"""
             <script>
-            const dailyData = {json.dumps(daily_data_json)};
+            const dailyAvgData = {json.dumps(daily_avg_json)};
             const dateSelect = document.getElementById('daily-date-select');
             const chartContainer = document.getElementById('daily-chart-container');
             
             dateSelect.addEventListener('change', function() {{
                 const selectedDate = dateSelect.value;
-                const data = dailyData[selectedDate];
+                const avgCost = dailyAvgData[selectedDate];
                 
-                if (!data) {{
+                if (avgCost === undefined) {{
                     chartContainer.innerHTML = '<p>No data available for this date.</p>';
                     return;
                 }}
                 
                 const trace = {{
-                    x: data.hours,
-                    y: data.costs,
-                    type: 'scatter',
-                    mode: 'lines+markers',
-                    line: {{ width: 2 }},
-                    marker: {{ size: 6 }}
+                    x: [selectedDate],
+                    y: [avgCost],
+                    type: 'bar',
+                    marker: {{ color: '#3b82f6' }},
+                    text: [`$${{avgCost.toFixed(4)}}/hr`],
+                    textposition: 'outside'
                 }};
                 
                 const layout = {{
-                    title: `Hourly Residential Spending per Household - ${{selectedDate}}`,
-                    xaxis: {{ title: 'Hour of Day', dtick: 2 }},
-                    yaxis: {{ title: 'Cost per Household per Hour (USD)' }},
-                    height: 400
+                    title: `Average Hourly Cost per Household - ${{selectedDate}}`,
+                    xaxis: {{ title: 'Date' }},
+                    yaxis: {{ title: 'Average Cost per Hour (USD)' }},
+                    height: 400,
+                    showlegend: false
                 }};
                 
                 Plotly.newPlot(chartContainer, [trace], layout, {{responsive: true}});
             }});
             </script>
             """)
-        else:
-            html_parts.append(
-                "<p class='text-muted'>No hourly data available for daily view.</p>")
-    elif not daily.empty and "Estimated_Hourly_Cost_USD" in daily:
-        # Fallback to daily aggregated data if hourly not available
-        daily["date"] = pd.to_datetime(daily["date"])
-        available_dates = sorted(daily["date"].dt.date.unique(), reverse=True)
-        default_date = available_dates[0] if len(available_dates) > 0 else None
-
-        if default_date:
-            html_parts.append(
-                "<div class='card mb-3'><div class='card-header fw-semibold'>Daily Spending</div><div class='card-body'>"
-            )
-            html_parts.append(
-                "<div class='mb-3'><label for='daily-date-select' class='form-label'>Select Date:</label>"
-                "<select id='daily-date-select' class='form-select form-select-sm' style='max-width: 200px;'>"
-            )
-            for date in available_dates:
-                selected = "selected" if date == default_date else ""
-                html_parts.append(
-                    f"<option value='{date}' {selected}>{date}</option>")
-            html_parts.append("</select></div>")
-            html_parts.append(
-                f"<p>Total cost for {default_date}: ${daily[daily['date'].dt.date == default_date]['Estimated_Hourly_Cost_USD'].iloc[0]:.2f}</p>"
-            )
-            html_parts.append("</div></div>")
         else:
             html_parts.append(
                 "<p class='text-muted'>No daily data available.</p>")
