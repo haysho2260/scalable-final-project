@@ -187,6 +187,9 @@ def download_and_process_file(file_url, target_dir):
                 if date_col:
                     df[date_col] = pd.to_datetime(
                         df[date_col], errors='coerce').dt.strftime("%Y-%m-%d")
+                # Handle both 'HE' and 'HR' column names (HR is used in newer files)
+                if 'HR' in df.columns and 'HE' not in df.columns:
+                    df['HE'] = df['HR']
                 if 'HE' in df.columns:
                     df['HE'] = pd.to_numeric(df['HE'], errors='coerce')
 
@@ -341,6 +344,9 @@ def process_lag_features(source_dir):
         f_path = os.path.join(source_dir, meta['file'])
         try:
             df = pd.read_csv(f_path)
+            # Handle both 'HE' and 'HR' column names (HR is used in newer files)
+            if 'HR' in df.columns and 'HE' not in df.columns:
+                df['HE'] = df['HR']
             # Ensure Date parsing here to be safe
             # We assume source files might or might not have lags already if we ran previous version.
             # But we are re-calculating or calculating fresh.
@@ -352,6 +358,10 @@ def process_lag_features(source_dir):
         return
 
     full_df = pd.concat(df_list, ignore_index=True)
+    
+    # Handle both 'HE' and 'HR' column names (HR is used in newer files)
+    if 'HR' in full_df.columns and 'HE' not in full_df.columns:
+        full_df['HE'] = full_df['HR']
 
     # 3. Prepare Date column (Robust parsing)
     date_col = None

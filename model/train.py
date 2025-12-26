@@ -130,6 +130,13 @@ def build_hourly_dataset() -> pd.DataFrame:
 
     # Clean and sort
     df = df.sort_values("timestamp").reset_index(drop=True)
+
+    # Save for debugging
+    debug_path = ROOT / "model" / "debug_hourly_dataset.csv"
+    df.to_csv(debug_path, index=False)
+    print(f"Saved hourly dataset for debugging to: {debug_path}")
+    print(f"Dataset shape: {df.shape}, columns: {list(df.columns)}")
+
     return df
 
 
