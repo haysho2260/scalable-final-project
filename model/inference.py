@@ -11,7 +11,7 @@ Results are written to `results/predictions.csv`.
 from __future__ import annotations
 
 
-from datetime import timedelta
+from datetime import timedelta, datetime
 from pathlib import Path
 import sys
 
@@ -105,6 +105,7 @@ def _predict_next(
     date_col: str,
     next_label: str,
     freq: str = "D",
+    target_date: pd.Timestamp | None = None,
 ) -> pd.DataFrame:
     df = df.sort_values(date_col)
     if df.empty:
@@ -113,8 +114,10 @@ def _predict_next(
     last_row = df.iloc[[-1]].copy()
     last_date = last_row[date_col].iloc[0]
 
-    # Calculate next date
-    if freq.upper().startswith("M"):
+    # Calculate next date (use target_date if provided, otherwise calculate from last_date)
+    if target_date is not None:
+        next_date = pd.to_datetime(target_date)
+    elif freq.upper().startswith("M"):
         next_date = pd.to_datetime(last_date) + DateOffset(months=1)
     elif freq.upper().startswith("H"):
         # Hourly: add 1 hour
@@ -425,39 +428,129 @@ def run_inference():
     daily_model, daily_features = _load_model(DAILY_MODEL_PATH)
     monthly_model, monthly_features = _load_model(MONTHLY_MODEL_PATH)
 
-    # Predict next hour
+    # Get last data point and current time
     hourly_sorted = hourly.sort_values("timestamp")
-    next_hour_pred = _predict_next(
-        hourly_model,
-        hourly_features,
-        hourly_sorted.rename(columns={"timestamp": "date"}),
-        "date",
-        "next_hour",
-        freq="H",
-    )
+    last_hourly_timestamp = pd.to_datetime(hourly_sorted["timestamp"].iloc[-1])
+    last_daily_date = pd.to_datetime(daily["date"].iloc[-1])
+    last_monthly_date = pd.to_datetime(monthly["year_month_start"].iloc[-1])
+    
+    # Current time (round down to hour for hourly, day for daily, month for monthly)
+    now = datetime.now()
+    current_hour = now.replace(minute=0, second=0, microsecond=0)
+    current_day = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    current_month = datetime(now.year, now.month, 1)
 
-    # Predict next day
-    next_day_pred = _predict_next(
-        daily_model,
-        daily_features,
-        daily.rename(columns={"date": "date"}),
-        "date",
-        "next_day",
-        freq="D",
-    )
+    # Generate predictions for all periods from last data to current time
+    all_predictions = []
 
-    # Predict next month
-    next_month_pred = _predict_next(
-        monthly_model,
-        monthly_features,
-        monthly.rename(columns={"year_month_start": "date"}),
-        "date",
-        "next_month",
-        freq="M",
-    )
+    # Hourly predictions: from last hour + 1 to current hour
+    if last_hourly_timestamp < pd.to_datetime(current_hour):
+        hourly_df = hourly_sorted.rename(columns={"timestamp": "date"})
+        current_pred_hour = last_hourly_timestamp + timedelta(hours=1)
+        
+        while current_pred_hour <= pd.to_datetime(current_hour):
+            pred = _predict_next(
+                hourly_model,
+                hourly_features,
+                hourly_df,
+                "date",
+                f"hour_{current_pred_hour.strftime('%Y-%m-%d %H:00')}",
+                freq="H",
+                target_date=current_pred_hour,
+            )
+            all_predictions.append(pred)
+            
+            # Update hourly_df with the prediction for next iteration
+            # Add a dummy row with the predicted timestamp for feature calculation
+            new_row = hourly_df.iloc[-1:].copy()
+            new_row["date"] = current_pred_hour
+            new_row[TARGET_COL] = pred["prediction"].iloc[0]
+            hourly_df = pd.concat([hourly_df, new_row], ignore_index=True)
+            
+            current_pred_hour += timedelta(hours=1)
 
-    results = pd.concat([next_hour_pred, next_day_pred,
-                        next_month_pred], ignore_index=True)
+    # Daily predictions: from last day + 1 to current day
+    if last_daily_date < pd.to_datetime(current_day):
+        daily_df = daily.rename(columns={"date": "date"})
+        current_pred_day = last_daily_date + timedelta(days=1)
+        
+        while current_pred_day <= pd.to_datetime(current_day):
+            pred = _predict_next(
+                daily_model,
+                daily_features,
+                daily_df,
+                "date",
+                f"day_{current_pred_day.strftime('%Y-%m-%d')}",
+                freq="D",
+                target_date=current_pred_day,
+            )
+            all_predictions.append(pred)
+            
+            # Update daily_df with the prediction for next iteration
+            new_row = daily_df.iloc[-1:].copy()
+            new_row["date"] = current_pred_day
+            new_row[TARGET_COL] = pred["prediction"].iloc[0]
+            daily_df = pd.concat([daily_df, new_row], ignore_index=True)
+            
+            current_pred_day += timedelta(days=1)
+
+    # Monthly predictions: from last month + 1 to current month
+    if last_monthly_date < pd.to_datetime(current_month):
+        monthly_df = monthly.rename(columns={"year_month_start": "date"})
+        current_pred_month = pd.to_datetime(last_monthly_date) + DateOffset(months=1)
+        
+        while current_pred_month <= pd.to_datetime(current_month):
+            pred = _predict_next(
+                monthly_model,
+                monthly_features,
+                monthly_df,
+                "date",
+                f"month_{current_pred_month.strftime('%Y-%m')}",
+                freq="M",
+                target_date=current_pred_month,
+            )
+            all_predictions.append(pred)
+            
+            # Update monthly_df with the prediction for next iteration
+            new_row = monthly_df.iloc[-1:].copy()
+            new_row["date"] = current_pred_month
+            new_row[TARGET_COL] = pred["prediction"].iloc[0]
+            monthly_df = pd.concat([monthly_df, new_row], ignore_index=True)
+            
+            current_pred_month += DateOffset(months=1)
+
+    if all_predictions:
+        results = pd.concat(all_predictions, ignore_index=True)
+        # Sort by date
+        results = results.sort_values("feature_date")
+    else:
+        # Fallback: generate single predictions if no gap
+        next_hour_pred = _predict_next(
+            hourly_model,
+            hourly_features,
+            hourly_sorted.rename(columns={"timestamp": "date"}),
+            "date",
+            "next_hour",
+            freq="H",
+        )
+        next_day_pred = _predict_next(
+            daily_model,
+            daily_features,
+            daily.rename(columns={"date": "date"}),
+            "date",
+            "next_day",
+            freq="D",
+        )
+        next_month_pred = _predict_next(
+            monthly_model,
+            monthly_features,
+            monthly.rename(columns={"year_month_start": "date"}),
+            "date",
+            "next_month",
+            freq="M",
+        )
+        results = pd.concat([next_hour_pred, next_day_pred, next_month_pred], ignore_index=True)
+    
     out_path = RESULTS_DIR / "predictions.csv"
     results.to_csv(out_path, index=False)
     return out_path, results

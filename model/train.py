@@ -55,6 +55,8 @@ def load_lag_load() -> pd.DataFrame:
     df = _read_many(FEATURES_DIR / "lag_load", "CAISO_Load")
     if df.empty:
         return df
+    # Handle Date column - may be in YYYY-MM-DD or YYYY-MM-DD HH:MM:SS format
+    df["Date"] = pd.to_datetime(df["Date"], errors="coerce").dt.date
     df["HE_num"] = pd.to_numeric(df["HE"], errors="coerce")
     df = df.dropna(subset=["Date", "HE_num"])
     df["timestamp"] = pd.to_datetime(

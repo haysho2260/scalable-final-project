@@ -397,6 +397,9 @@ def process_lag_prices():
                 (c for c in final_df.columns if 'date' in c.lower()), None)
             if date_col_final:
                 final_df = final_df.sort_values(date_col_final)
+                # Drop duplicates on date_col_final before reindexing to avoid duplicate label error
+                final_df = final_df.drop_duplicates(
+                    subset=[date_col_final], keep='last')
 
                 # Create strict hourly index for target month
                 min_dt = datetime(target_year, target_month, 1)
@@ -412,6 +415,14 @@ def process_lag_prices():
                 final_df = final_df.set_index(date_col_final).reindex(full_idx)
                 final_df.index.name = date_col_final
                 final_df = final_df.reset_index()
+
+                # Normalize Date column to YYYY-MM-DD format and set HE from timestamp
+                timestamps = pd.to_datetime(final_df[date_col_final])
+                final_df[date_col_final] = timestamps.dt.strftime("%Y-%m-%d")
+                # Set HE from the hour component (HE is 1-indexed: 1-24)
+                if 'HE' not in final_df.columns or final_df['HE'].isna().all() or (final_df['HE'] == 0).all():
+                    final_df['HE'] = timestamps.dt.hour + \
+                        1  # HE is 1-indexed (1-24)
 
                 # Interpolate numeric
                 numeric_cols = final_df.select_dtypes(

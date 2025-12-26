@@ -358,7 +358,7 @@ def process_lag_features(source_dir):
         return
 
     full_df = pd.concat(df_list, ignore_index=True)
-    
+
     # Handle both 'HE' and 'HR' column names (HR is used in newer files)
     if 'HR' in full_df.columns and 'HE' not in full_df.columns:
         full_df['HE'] = full_df['HR']
@@ -505,6 +505,18 @@ def process_lag_features(source_dir):
 
                 # Use clean_df for saving
                 save_df = clean_df.drop(columns=cols_to_drop, errors='ignore')
+
+                # Normalize Date column to YYYY-MM-DD format and set HE from timestamp
+                if date_col_final in save_df.columns:
+                    # The date_col_final now contains timestamps from reindex
+                    timestamps = pd.to_datetime(save_df[date_col_final])
+                    # Extract date part (YYYY-MM-DD)
+                    save_df[date_col_final] = timestamps.dt.strftime(
+                        "%Y-%m-%d")
+                    # Set HE from the hour component (HE is 1-indexed: 1-24)
+                    if 'HE' not in save_df.columns or save_df['HE'].isna().all() or (save_df['HE'] == 0).all():
+                        save_df['HE'] = timestamps.dt.hour + \
+                            1  # HE is 1-indexed (1-24)
             else:
                 # Fallback if no date col found (unlikely)
                 save_df = group.drop(columns=cols_to_drop, errors='ignore')
