@@ -9,7 +9,6 @@ Results are written to `results/predictions.csv`.
 """
 
 from __future__ import annotations
-from model.train import build_hourly_dataset
 
 
 from datetime import timedelta, datetime
