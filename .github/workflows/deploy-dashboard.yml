@@ -9,6 +9,10 @@ on:
   push:
     branches: [main]
 
+concurrency:
+  group: deploy-dashboard
+  cancel-in-progress: false
+
 jobs:
   train:
     # Always run this job, but conditionally train
@@ -157,11 +161,22 @@ jobs:
         if: steps.check_models.outputs.models_exist == 'true'
         run: python dashboard/build_static.py
 
+      - name: Verify site directory exists
+        if: steps.check_models.outputs.models_exist == 'true'
+        run: |
+          if [ ! -d "site" ] || [ ! -f "site/index.html" ]; then
+            echo "ERROR: Dashboard was not built. site/index.html not found."
+            exit 1
+          fi
+          echo "Dashboard built successfully."
+
       - name: Upload dashboard artifact
         if: steps.check_models.outputs.models_exist == 'true'
+        id: upload_artifact
         uses: actions/upload-pages-artifact@v3
         with:
           path: site
+        continue-on-error: false
 
   deploy:
     needs: inference
