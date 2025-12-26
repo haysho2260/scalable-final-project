@@ -9,7 +9,7 @@ Results are written to `results/predictions.csv`.
 """
 
 from __future__ import annotations
-
+from model.train import build_hourly_dataset
 
 
 from datetime import timedelta, datetime
@@ -27,7 +27,6 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from model.train import build_hourly_dataset
 
 RESULTS_DIR = ROOT / "results"
 HOURLY_MODEL_PATH = ROOT / "model" / "hourly_spend_model.pkl"
@@ -112,6 +111,23 @@ def _predict_next(
     if df.empty:
         raise ValueError("No data available to perform inference.")
 
+    # OPTIMIZATION: Limit historical data to recent period for faster filtering
+    # Use only last 2 years of data for feature calculation (faster than full dataset)
+    if len(df) > 0:
+        if freq.upper().startswith("H"):
+            # For hourly: use last 730 days (2 years)
+            cutoff_date = pd.to_datetime(
+                df[date_col].iloc[-1]) - timedelta(days=730)
+            df = df[pd.to_datetime(
+                df[date_col], errors="coerce") >= cutoff_date].copy()
+        elif freq.upper().startswith("D"):
+            # For daily: use last 730 days (2 years)
+            cutoff_date = pd.to_datetime(
+                df[date_col].iloc[-1]) - timedelta(days=730)
+            df = df[pd.to_datetime(
+                df[date_col], errors="coerce") >= cutoff_date].copy()
+        # For monthly, keep all data (smaller dataset)
+
     last_row = df.iloc[[-1]].copy()
     last_date = last_row[date_col].iloc[0]
 
@@ -132,8 +148,20 @@ def _predict_next(
         # Period -> timestamp conversion handled upstream; here treat as pandas Period
         next_date = (last_date + 1).to_timestamp()
 
-    # Convert date_col to datetime for easier comparison
+    # OPTIMIZATION: Cache datetime conversion and date components
     df_dates = pd.to_datetime(df[date_col], errors="coerce")
+    next_month = next_date.month
+    next_dayofweek = next_date.dayofweek
+    next_hour = next_date.hour if freq.upper().startswith("H") else None
+
+    # OPTIMIZATION: Pre-compute date components for faster filtering
+    # Cache date components to avoid repeated dt access
+    if '_cached_month' not in df.columns:
+        df['_cached_month'] = df_dates.dt.month
+    if '_cached_dayofweek' not in df.columns:
+        df['_cached_dayofweek'] = df_dates.dt.dayofweek
+    if freq.upper().startswith("H") and '_cached_hour' not in df.columns:
+        df['_cached_hour'] = df_dates.dt.hour if 'hour' not in df.columns else df['hour']
 
     # Find similar historical periods to use as a base
     # For daily: same day of week, same month (from previous years)
@@ -142,21 +170,21 @@ def _predict_next(
 
     if freq.upper().startswith("M"):
         # Monthly: find same month from previous years
-        similar_mask = df_dates.dt.month == next_date.month
+        similar_mask = df['_cached_month'] == next_month
         similar_rows = df[similar_mask]
     elif freq.upper().startswith("H"):
         # Hourly: find same hour of day, same day of week, same month from history
         similar_mask = (
-            (df_dates.dt.month == next_date.month) &
-            (df_dates.dt.dayofweek == next_date.dayofweek) &
-            (df_dates.dt.hour == next_date.hour)
+            (df['_cached_month'] == next_month) &
+            (df['_cached_dayofweek'] == next_dayofweek) &
+            (df['_cached_hour'] == next_hour)
         )
         similar_rows = df[similar_mask]
     else:
         # Daily: find same day of week and same month from history
         similar_mask = (
-            (df_dates.dt.month == next_date.month) &
-            (df_dates.dt.dayofweek == next_date.dayofweek)
+            (df['_cached_month'] == next_month) &
+            (df['_cached_dayofweek'] == next_dayofweek)
         )
         similar_rows = df[similar_mask]
 
@@ -251,7 +279,7 @@ def _predict_next(
             elif freq.upper().startswith("H"):
                 # Hourly: look back by hours
                 lag_date = next_date - timedelta(hours=lag_num)
-                df_dates = pd.to_datetime(df[date_col], errors="coerce")
+                # OPTIMIZATION: Use cached df_dates instead of recalculating
                 lag_rows = df[df_dates <= lag_date]
                 if not lag_rows.empty:
                     # Get the base feature value from that hour
@@ -263,7 +291,7 @@ def _predict_next(
             else:
                 # Daily: look back by days
                 lag_date = next_date - timedelta(days=lag_num)
-                df_dates = pd.to_datetime(df[date_col], errors="coerce")
+                # OPTIMIZATION: Use cached df_dates instead of recalculating
                 lag_rows = df[df_dates <= lag_date]
                 if not lag_rows.empty:
                     # Get the base feature value from that date
@@ -279,16 +307,19 @@ def _predict_next(
             next_row[lag_col] = lag_value
         else:
             # Fallback: use recent average of the lag column itself
+            # OPTIMIZATION: Use iloc for faster tail access
             if lag_col in df.columns:
-                next_row[lag_col] = df[lag_col].tail(
-                    30).mean() if len(df) >= 30 else df[lag_col].mean()
+                tail_size = min(30, len(df))
+                next_row[lag_col] = df[lag_col].iloc[-tail_size:
+                                                     ].mean() if tail_size > 0 else df[lag_col].mean()
             else:
                 # If lag column doesn't exist, try to compute from base column
                 try:
                     base_col = lag_col.split("_lag_")[0]
                     if base_col in df.columns:
-                        next_row[lag_col] = df[base_col].tail(
-                            30).mean() if len(df) >= 30 else df[base_col].mean()
+                        tail_size = min(30, len(df))
+                        next_row[lag_col] = df[base_col].iloc[-tail_size:].mean(
+                        ) if tail_size > 0 else df[base_col].mean()
                 except:
                     pass
 
@@ -324,18 +355,22 @@ def _predict_next(
             next_row[col], 'iloc') else next_row[col]
         if pd.isna(col_val):
             if col in df.columns:
+                # OPTIMIZATION: Use iloc for faster tail access
                 if freq.upper().startswith("M"):
                     # Monthly: use average from last 12 months
-                    next_row[col] = df[col].tail(12).mean() if len(
-                        df) >= 12 else df[col].mean()
+                    tail_size = min(12, len(df))
+                    next_row[col] = df[col].iloc[-tail_size:
+                                                 ].mean() if tail_size > 0 else df[col].mean()
                 elif freq.upper().startswith("H"):
                     # Hourly: use average from last 24 hours (same time period)
-                    next_row[col] = df[col].tail(24).mean() if len(
-                        df) >= 24 else df[col].mean()
+                    tail_size = min(24, len(df))
+                    next_row[col] = df[col].iloc[-tail_size:
+                                                 ].mean() if tail_size > 0 else df[col].mean()
                 else:
                     # Daily: use average from last 30 days
-                    next_row[col] = df[col].tail(30).mean() if len(
-                        df) >= 30 else df[col].mean()
+                    tail_size = min(30, len(df))
+                    next_row[col] = df[col].iloc[-tail_size:
+                                                 ].mean() if tail_size > 0 else df[col].mean()
 
     # Ensure critical features are set even if similar_rows was empty
     for col in critical_features:
@@ -346,22 +381,28 @@ def _predict_next(
                     if freq.upper().startswith("H") and "hour" in next_row.columns:
                         hour = int(next_row["hour"].iloc[0] if hasattr(
                             next_row["hour"], 'iloc') else next_row["hour"])
-                        same_hour_data = df[df["hour"] ==
-                                            hour] if "hour" in df.columns else df
+                        # OPTIMIZATION: Use cached hour column if available
+                        hour_col = '_cached_hour' if '_cached_hour' in df.columns else 'hour'
+                        same_hour_data = df[df[hour_col] ==
+                                            hour] if hour_col in df.columns else df
                         if not same_hour_data.empty:
-                            next_row[col] = same_hour_data[col].tail(7).mean() if len(
-                                same_hour_data) >= 7 else same_hour_data[col].mean()
+                            tail_size = min(7, len(same_hour_data))
+                            next_row[col] = same_hour_data[col].iloc[-tail_size:].mean(
+                            ) if tail_size > 0 else same_hour_data[col].mean()
                         else:
-                            next_row[col] = df[col].tail(24).mean() if len(
-                                df) >= 24 else df[col].mean()
+                            tail_size = min(24, len(df))
+                            next_row[col] = df[col].iloc[-tail_size:].mean(
+                            ) if tail_size > 0 else df[col].mean()
                     else:
                         # For daily/monthly, use recent average
                         if freq.upper().startswith("M"):
-                            next_row[col] = df[col].tail(12).mean() if len(
-                                df) >= 12 else df[col].mean()
+                            tail_size = min(12, len(df))
+                            next_row[col] = df[col].iloc[-tail_size:].mean(
+                            ) if tail_size > 0 else df[col].mean()
                         else:
-                            next_row[col] = df[col].tail(30).mean() if len(
-                                df) >= 30 else df[col].mean()
+                            tail_size = min(30, len(df))
+                            next_row[col] = df[col].iloc[-tail_size:].mean(
+                            ) if tail_size > 0 else df[col].mean()
 
     # Fill any remaining NaN features with recent averages
     for col in features:
@@ -370,18 +411,22 @@ def _predict_next(
                 next_row[col], 'iloc') else next_row[col]
             if pd.isna(col_val):
                 if col in df.columns:
+                    # OPTIMIZATION: Use iloc for faster tail access
                     if freq.upper().startswith("H"):
                         # Hourly: use last 24 hours
-                        next_row[col] = df[col].tail(24).mean() if len(
-                            df) >= 24 else df[col].mean()
+                        tail_size = min(24, len(df))
+                        next_row[col] = df[col].iloc[-tail_size:
+                                                     ].mean() if tail_size > 0 else df[col].mean()
                     elif freq.upper().startswith("M"):
                         # Monthly: use last 12 months
-                        next_row[col] = df[col].tail(12).mean() if len(
-                            df) >= 12 else df[col].mean()
+                        tail_size = min(12, len(df))
+                        next_row[col] = df[col].iloc[-tail_size:
+                                                     ].mean() if tail_size > 0 else df[col].mean()
                     else:
                         # Daily: use last 30 days
-                        next_row[col] = df[col].tail(30).mean() if len(
-                            df) >= 30 else df[col].mean()
+                        tail_size = min(30, len(df))
+                        next_row[col] = df[col].iloc[-tail_size:
+                                                     ].mean() if tail_size > 0 else df[col].mean()
 
     # Ensure critical features are not zero or NaN before prediction
     for col in critical_features:
@@ -389,14 +434,66 @@ def _predict_next(
             val = next_row[col].iloc[0] if hasattr(
                 next_row[col], 'iloc') else next_row[col]
             if pd.isna(val) or val == 0:
-                # Try to get from recent data
+                # Try to get from recent data - use more data for better estimate
                 if col in df.columns:
-                    recent_val = df[col].tail(24).mean() if len(
-                        df) >= 24 else df[col].mean()
+                    # OPTIMIZATION: Use iloc for faster tail access
+                    # Use last 168 hours (1 week) for hourly, last 30 days for daily
+                    if freq.upper().startswith("H"):
+                        tail_size = min(168, len(df))  # 1 week of hourly data
+                    else:
+                        tail_size = min(30, len(df))  # 30 days for daily
+                    
+                    # For critical features, prefer non-zero values
+                    if col in critical_features:
+                        non_zero_data = df[df[col] > 0][col]
+                        if len(non_zero_data) > 0:
+                            recent_val = non_zero_data.iloc[-min(tail_size, len(non_zero_data)):].mean()
+                        else:
+                            recent_val = df[col].iloc[-tail_size:].mean() if tail_size > 0 else df[col].mean()
+                    else:
+                        recent_val = df[col].iloc[-tail_size:].mean() if tail_size > 0 else df[col].mean()
+                    
                     if not pd.isna(recent_val) and recent_val != 0:
                         next_row[col] = recent_val
+                    else:
+                        # Last resort: use overall mean (prefer non-zero)
+                        if col in critical_features:
+                            non_zero_overall = df[df[col] > 0][col]
+                            overall_mean = non_zero_overall.mean() if len(non_zero_overall) > 0 else df[col].mean()
+                        else:
+                            overall_mean = df[col].mean()
+                        if not pd.isna(overall_mean) and overall_mean != 0:
+                            next_row[col] = overall_mean
 
     X = next_row[features].ffill().bfill()
+
+    # Debug: Check if critical features are set
+    if "CAISO Total" in features and "CAISO Total" in X.columns:
+        caiso_val = X["CAISO Total"].iloc[0] if len(X) > 0 else None
+        if caiso_val is None or pd.isna(caiso_val) or caiso_val == 0:
+            # If CAISO Total is missing/zero, use recent NON-ZERO average from df
+            if "CAISO Total" in df.columns:
+                # Filter out zeros and get recent non-zero values
+                non_zero_caiso = df[df["CAISO Total"] > 0]["CAISO Total"]
+                if len(non_zero_caiso) > 0:
+                    # Use last 168 hours of non-zero data, or all if less available
+                    recent_caiso = non_zero_caiso.iloc[-min(168, len(non_zero_caiso)):].mean()
+                    X["CAISO Total"] = recent_caiso
+                else:
+                    # Last resort: use overall mean (even if some zeros)
+                    recent_caiso = df["CAISO Total"].mean()
+                    if recent_caiso > 0:
+                        X["CAISO Total"] = recent_caiso
+    
+    # Debug logging for first few predictions to diagnose issues
+    if not hasattr(_predict_next, '_debug_count'):
+        _predict_next._debug_count = 0
+    _predict_next._debug_count += 1
+    if _predict_next._debug_count <= 3:
+        caiso_val = X["CAISO Total"].iloc[0] if "CAISO Total" in X.columns else None
+        price_val = X["Monthly_Price_Cents_per_kWh"].iloc[0] if "Monthly_Price_Cents_per_kWh" in X.columns else None
+        print(f"  DEBUG Prediction #{_predict_next._debug_count}: CAISO Total={caiso_val:.2f}, Price={price_val:.2f}, Date={next_date}")
+
     pred = model.predict(X)[0]
 
     # Ensure prediction is not negative (costs can't be negative)
@@ -441,17 +538,36 @@ def run_inference():
     current_day = now.replace(hour=0, minute=0, second=0, microsecond=0)
     current_month = datetime(now.year, now.month, 1)
 
-    # Generate predictions for all periods from last data to current time
+    # Limit predictions to reasonable windows to avoid long runtimes
+    # Only predict next 7 days of hourly, 30 days of daily, 12 months of monthly
+    max_pred_hour = last_hourly_timestamp + timedelta(days=7)
+    max_pred_day = last_daily_date + timedelta(days=30)
+    max_pred_month = last_monthly_date + DateOffset(months=12)
+
+    # Use the earlier of: current time or max prediction window
+    pred_hour_limit = min(pd.to_datetime(current_hour),
+                          pd.to_datetime(max_pred_hour))
+    pred_day_limit = min(pd.to_datetime(current_day),
+                         pd.to_datetime(max_pred_day))
+    pred_month_limit = min(pd.to_datetime(current_month),
+                           pd.to_datetime(max_pred_month))
+
+    # Generate predictions for all periods from last data to current time (or limit)
     all_predictions = []
 
-    # Hourly predictions: from last hour + 1 to current hour
-    if last_hourly_timestamp < pd.to_datetime(current_hour):
+    # Hourly predictions: from last hour + 1 to limit
+    if last_hourly_timestamp < pred_hour_limit:
         hourly_df = hourly_sorted.rename(columns={"timestamp": "date"})
         current_pred_hour = last_hourly_timestamp + timedelta(hours=1)
-        max_hours = 8760  # Max 1 year of hourly predictions
+        max_hours = 168  # Max 7 days of hourly predictions (24 * 7)
         hour_count = 0
+        hourly_new_rows_buffer = []  # Use separate list instead of DataFrame attribute
 
-        while current_pred_hour <= pd.to_datetime(current_hour) and hour_count < max_hours:
+        print(
+            f"Generating hourly predictions from {current_pred_hour} to {pred_hour_limit} (max {max_hours} hours)...")
+        while current_pred_hour <= pred_hour_limit and hour_count < max_hours:
+            if hour_count % 24 == 0:  # Print progress every 24 hours
+                print(f"  Progress: {hour_count}/{max_hours} hours")
             pred = _predict_next(
                 hourly_model,
                 hourly_features,
@@ -465,22 +581,38 @@ def run_inference():
 
             # Update hourly_df with the prediction for next iteration
             # Add a dummy row with the predicted timestamp for feature calculation
+            # Collect new rows in a list and concat in batches for better performance
             new_row = hourly_df.iloc[-1:].copy()
             new_row["date"] = current_pred_hour
             new_row[TARGET_COL] = pred["prediction"].iloc[0]
-            hourly_df = pd.concat([hourly_df, new_row], ignore_index=True)
+            hourly_new_rows_buffer.append(new_row)
+            # Concat every 100 rows to balance memory and performance
+            if len(hourly_new_rows_buffer) >= 100:
+                hourly_df = pd.concat(
+                    [hourly_df] + hourly_new_rows_buffer, ignore_index=True)
+                hourly_new_rows_buffer = []
 
             current_pred_hour += timedelta(hours=1)
             hour_count += 1
 
-    # Daily predictions: from last day + 1 to current day
-    if last_daily_date < pd.to_datetime(current_day):
+        # Final concat of any remaining buffered rows
+        if hourly_new_rows_buffer:
+            hourly_df = pd.concat(
+                [hourly_df] + hourly_new_rows_buffer, ignore_index=True)
+
+    # Daily predictions: from last day + 1 to limit
+    if last_daily_date < pred_day_limit:
         daily_df = daily.rename(columns={"date": "date"})
         current_pred_day = last_daily_date + timedelta(days=1)
-        max_days = 365  # Max 1 year of daily predictions
+        max_days = 30  # Max 30 days of daily predictions
         day_count = 0
+        daily_new_rows_buffer = []  # Use separate list instead of DataFrame attribute
 
-        while current_pred_day <= pd.to_datetime(current_day) and day_count < max_days:
+        print(
+            f"Generating daily predictions from {current_pred_day} to {pred_day_limit} (max {max_days} days)...")
+        while current_pred_day <= pred_day_limit and day_count < max_days:
+            if day_count % 7 == 0:  # Print progress every week
+                print(f"  Progress: {day_count}/{max_days} days")
             pred = _predict_next(
                 daily_model,
                 daily_features,
@@ -496,20 +628,33 @@ def run_inference():
             new_row = daily_df.iloc[-1:].copy()
             new_row["date"] = current_pred_day
             new_row[TARGET_COL] = pred["prediction"].iloc[0]
-            daily_df = pd.concat([daily_df, new_row], ignore_index=True)
+            # Buffer and concat in batches for better performance
+            daily_new_rows_buffer.append(new_row)
+            if len(daily_new_rows_buffer) >= 30:
+                daily_df = pd.concat(
+                    [daily_df] + daily_new_rows_buffer, ignore_index=True)
+                daily_new_rows_buffer = []
 
             current_pred_day += timedelta(days=1)
             day_count += 1
 
-    # Monthly predictions: from last month + 1 to current month
-    if last_monthly_date < pd.to_datetime(current_month):
+        # Final concat of any remaining buffered rows
+        if daily_new_rows_buffer:
+            daily_df = pd.concat(
+                [daily_df] + daily_new_rows_buffer, ignore_index=True)
+
+    # Monthly predictions: from last month + 1 to limit
+    if last_monthly_date < pred_month_limit:
         monthly_df = monthly.rename(columns={"year_month_start": "date"})
         current_pred_month = pd.to_datetime(
             last_monthly_date) + DateOffset(months=1)
-        max_months = 24  # Max 2 years of monthly predictions
+        max_months = 12  # Max 12 months of monthly predictions
         month_count = 0
 
-        while current_pred_month <= pd.to_datetime(current_month) and month_count < max_months:
+        print(
+            f"Generating monthly predictions from {current_pred_month} to {pred_month_limit} (max {max_months} months)...")
+        while current_pred_month <= pred_month_limit and month_count < max_months:
+            print(f"  Progress: {month_count}/{max_months} months")
             pred = _predict_next(
                 monthly_model,
                 monthly_features,
@@ -525,6 +670,7 @@ def run_inference():
             new_row = monthly_df.iloc[-1:].copy()
             new_row["date"] = current_pred_month
             new_row[TARGET_COL] = pred["prediction"].iloc[0]
+            # For monthly, concat immediately is fine (only 12 predictions)
             monthly_df = pd.concat([monthly_df, new_row], ignore_index=True)
 
             current_pred_month += DateOffset(months=1)

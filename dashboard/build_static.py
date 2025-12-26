@@ -328,17 +328,15 @@ def build():
         )
 
         if default_date:
-            # Date selector and time format toggle
+            # Calendar date picker with disabled dates
+            # Convert available dates to strings for JSON serialization
+            available_dates_str = [str(d) for d in available_dates]
+            available_dates_js = json.dumps(available_dates_str)
             html_parts.append(
                 f"<div class='mb-3 d-flex gap-3 align-items-center flex-wrap'>"
                 f"<label for='hourlyDateSelect' class='form-label mb-0'><strong>Select Date:</strong></label>"
-                f"<select id='hourlyDateSelect' class='form-select' style='width: auto; min-width: 200px;'>"
+                f"<input type='date' id='hourlyDateSelect' class='form-control' style='width: auto; min-width: 200px;' value='{default_date}'>"
             )
-            for date in available_dates:
-                selected = "selected" if date == default_date else ""
-                html_parts.append(
-                    f"<option value='{date}' {selected}>{date}</option>")
-            html_parts.append("</select>")
 
             html_parts.append(
                 f"<label for='hourlyTimeFormat' class='form-label mb-0'><strong>Time Format:</strong></label>"
@@ -348,6 +346,48 @@ def build():
                 f"</select>"
                 f"</div>"
             )
+
+            # Add flatpickr calendar library for better date selection with disabled dates
+            html_parts.append("""
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
+<script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
+""")
+
+            # Add JavaScript to initialize calendar with disabled dates
+            html_parts.append(f"""
+<script>
+(function() {{
+    const availableDates = {available_dates_js};
+    const dateInput = document.getElementById('hourlyDateSelect');
+    
+    // Convert available dates to Date objects for flatpickr
+    const enabledDates = availableDates.map(d => new Date(d + 'T00:00:00'));
+    
+    // Initialize flatpickr with disabled dates
+    flatpickr(dateInput, {{
+        dateFormat: 'Y-m-d',
+        defaultDate: '{default_date}',
+        enable: enabledDates,
+        disable: [
+            function(date) {{
+                // Disable all dates not in availableDates
+                const dateStr = date.toISOString().split('T')[0];
+                return !availableDates.includes(dateStr);
+            }}
+        ],
+        onReady: function(selectedDates, dateStr, instance) {{
+            // Style disabled dates
+            instance.calendarContainer.querySelectorAll('.flatpickr-day').forEach(day => {{
+                if (day.classList.contains('flatpickr-disabled')) {{
+                    day.style.opacity = '0.3';
+                    day.style.cursor = 'not-allowed';
+                }}
+            }});
+        }}
+    }});
+}})();
+</script>
+""")
 
             # Prepare hourly data for JavaScript
             hourly_data_list = []
@@ -412,7 +452,7 @@ def build():
             html_parts.append(f"""
             <script>
             (function() {{
-                const dateSelect = document.getElementById('hourlyDateSelect');
+                const dateSelect = document.getElementById('hourlyDateSelect'); // Now a date input with flatpickr
                 const timeFormatSelect = document.getElementById('hourlyTimeFormat');
                 const chartContainer = document.getElementById('hourlyChartContainer');
                 const hourlyData = {hourly_data_json};
@@ -531,15 +571,50 @@ def build():
             html_parts.append(
                 "<div class='card mb-3'><div class='card-header fw-semibold'>Daily Average Hourly Cost</div><div class='card-body'>"
             )
+            # Calendar date picker for daily view
+            # Convert available dates to strings for JSON serialization
+            daily_available_dates_str = [str(d) for d in available_dates]
+            daily_available_dates_js = json.dumps(daily_available_dates_str)
             html_parts.append(
-                "<div class='mb-3'><label for='daily-date-select' class='form-label'>Select Date:</label>"
-                "<select id='daily-date-select' class='form-select form-select-sm' style='max-width: 200px;'>"
+                f"<div class='mb-3'><label for='daily-date-select' class='form-label'>Select Date:</label>"
+                f"<input type='date' id='daily-date-select' class='form-control form-control-sm' style='max-width: 200px;' value='{default_date}'></div>"
             )
-            for date in available_dates:
-                selected = "selected" if date == default_date else ""
-                html_parts.append(
-                    f"<option value='{date}' {selected}>{date}</option>")
-            html_parts.append("</select></div>")
+
+            # Add JavaScript to initialize calendar for daily view
+            html_parts.append(f"""
+<script>
+(function() {{
+    const dailyAvailableDates = {daily_available_dates_js};
+    const dailyDateInput = document.getElementById('daily-date-select');
+    
+    // Convert available dates to Date objects for flatpickr
+    const dailyEnabledDates = dailyAvailableDates.map(d => new Date(d + 'T00:00:00'));
+    
+    // Initialize flatpickr with disabled dates
+    flatpickr(dailyDateInput, {{
+        dateFormat: 'Y-m-d',
+        defaultDate: '{default_date}',
+        enable: dailyEnabledDates,
+        disable: [
+            function(date) {{
+                // Disable all dates not in availableDates
+                const dateStr = date.toISOString().split('T')[0];
+                return !dailyAvailableDates.includes(dateStr);
+            }}
+        ],
+        onReady: function(selectedDates, dateStr, instance) {{
+            // Style disabled dates
+            instance.calendarContainer.querySelectorAll('.flatpickr-day').forEach(day => {{
+                if (day.classList.contains('flatpickr-disabled')) {{
+                    day.style.opacity = '0.3';
+                    day.style.cursor = 'not-allowed';
+                }}
+            }});
+        }}
+    }});
+}})();
+</script>
+""")
             html_parts.append("<div id='daily-chart-container'>")
             html_parts.append(fig_daily.to_html(
                 full_html=False, include_plotlyjs=False))
