@@ -260,11 +260,12 @@ def build():
         # Average by hour of day
         hourly_avg = hourly.groupby(
             "hour")["Estimated_Hourly_Cost_USD"].mean().reset_index()
-        fig_hour_avg = px.bar(
+        fig_hour_avg = px.line(
             hourly_avg, x="hour", y="Estimated_Hourly_Cost_USD",
             title="Average Residential Cost per Household per Hour of Day",
             labels={"hour": "Hour of Day",
-                    "Estimated_Hourly_Cost_USD": "Cost per Household (USD)"}
+                    "Estimated_Hourly_Cost_USD": "Cost per Household (USD)"},
+            markers=True
         )
         fig_hour_avg.update_xaxes(dtick=1)
         html_parts.append(
@@ -317,11 +318,12 @@ def build():
         daily_avg["day_name"] = pd.Categorical(
             daily_avg["day_name"], categories=day_order, ordered=True)
         daily_avg = daily_avg.sort_values("day_name")
-        fig_day_avg = px.bar(
+        fig_day_avg = px.line(
             daily_avg, x="day_name", y="Estimated_Hourly_Cost_USD",
             title="Average Residential Cost per Household by Day of Week",
             labels={"day_name": "Day",
-                    "Estimated_Hourly_Cost_USD": "Cost per Household per Day (USD)"}
+                    "Estimated_Hourly_Cost_USD": "Cost per Household per Day (USD)"},
+            markers=True
         )
         html_parts.append(
             "<div class='card mb-3'><div class='card-header fw-semibold'>Average Cost by Day of Week</div><div class='card-body'>"
@@ -347,11 +349,12 @@ def build():
     # Weekly section
     html_parts.append("<div id='weekly-section' style='display:none;'>")
     if not weekly.empty:
-        fig_weekly = px.bar(
+        fig_weekly = px.line(
             weekly.sort_values("week_start"), x="week_start", y="Estimated_Hourly_Cost_USD",
             title="Weekly Residential Spending per Household",
             labels={"week_start": "Week Starting",
-                    "Estimated_Hourly_Cost_USD": "Cost per Household per Week (USD)"}
+                    "Estimated_Hourly_Cost_USD": "Cost per Household per Week (USD)"},
+            markers=True
         )
         html_parts.append(
             "<div class='card mb-3'><div class='card-header fw-semibold'>Weekly Spending</div><div class='card-body'>"
@@ -385,11 +388,12 @@ def build():
     if not monthly.empty and "Estimated_Hourly_Cost_USD" in monthly:
         monthly["year_month_start"] = pd.to_datetime(
             monthly["year_month_start"])
-        fig_month = px.bar(
+        fig_month = px.line(
             monthly.sort_values("year_month_start"), x="year_month_start", y="Estimated_Hourly_Cost_USD",
             title="Monthly Residential Spending per Household",
             labels={"year_month_start": "Month",
-                    "Estimated_Hourly_Cost_USD": "Cost per Household per Month (USD)"}
+                    "Estimated_Hourly_Cost_USD": "Cost per Household per Month (USD)"},
+            markers=True
         )
         fig_month.update_xaxes(rangeslider_visible=True)
         html_parts.append(
@@ -408,11 +412,12 @@ def build():
         monthly_avg["month_name"] = pd.Categorical(
             monthly_avg["month_name"], categories=month_order, ordered=True)
         monthly_avg = monthly_avg.sort_values("month_name")
-        fig_month_avg = px.bar(
+        fig_month_avg = px.line(
             monthly_avg, x="month_name", y="Estimated_Hourly_Cost_USD",
             title="Average Residential Cost per Household by Month",
             labels={"month_name": "Month",
-                    "Estimated_Hourly_Cost_USD": "Cost per Household per Month (USD)"}
+                    "Estimated_Hourly_Cost_USD": "Cost per Household per Month (USD)"},
+            markers=True
         )
         html_parts.append(
             "<div class='card mb-3'><div class='card-header fw-semibold'>Average Cost by Month</div><div class='card-body'>"
@@ -469,11 +474,12 @@ def build():
         yearly["year_label"] = yearly.apply(make_year_label, axis=1)
         yearly = yearly[yearly["month_count"] >= 6].copy()
 
-        fig_year = px.bar(
+        fig_year = px.line(
             yearly, x="year_label", y="Estimated_Hourly_Cost_USD",
             title="Yearly Residential Spending per Household",
             labels={"year_label": "Year",
-                    "Estimated_Hourly_Cost_USD": "Cost per Household per Year (USD)"}
+                    "Estimated_Hourly_Cost_USD": "Cost per Household per Year (USD)"},
+            markers=True
         )
         html_parts.append(
             "<div class='card mb-3'><div class='card-header fw-semibold'>Yearly Spending</div><div class='card-body'>"

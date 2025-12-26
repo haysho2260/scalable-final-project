@@ -111,17 +111,127 @@ def _predict_next(
     last_row = df.iloc[[-1]].copy()
     last_date = last_row[date_col].iloc[0]
 
-    # For next period, reuse most recent features (persistence).
-    next_row = last_row.copy()
+    # Calculate next date
     if freq.upper().startswith("M"):
-        next_row[date_col] = pd.to_datetime(last_date) + DateOffset(months=1)
+        next_date = pd.to_datetime(last_date) + DateOffset(months=1)
     elif isinstance(last_date, pd.Timestamp):
-        next_row[date_col] = last_date + timedelta(days=1)
+        next_date = last_date + timedelta(days=1)
     else:
         # Period -> timestamp conversion handled upstream; here treat as pandas Period
-        next_row[date_col] = (last_date + 1).to_timestamp()
+        next_date = (last_date + 1).to_timestamp()
 
-    X = next_row[features]
+    # For next period, update temporal features and use historical patterns
+    next_row = last_row.copy()
+    next_row[date_col] = next_date
+    
+    # Update temporal features based on next date
+    if "hour" in next_row.columns:
+        # For daily predictions, use average hour of day; for monthly, use mean
+        if freq.upper().startswith("M"):
+            next_row["hour"] = df["hour"].mean() if "hour" in df.columns else 12
+        else:
+            # For next day, use average hour from similar days of week
+            next_dow = next_date.dayofweek
+            similar_days = df[df["dayofweek"] == next_dow] if "dayofweek" in df.columns else df
+            next_row["hour"] = similar_days["hour"].mean() if "hour" in similar_days.columns else 12
+    
+    if "dayofweek" in next_row.columns:
+        next_row["dayofweek"] = next_date.dayofweek
+    
+    if "month" in next_row.columns:
+        next_row["month"] = next_date.month
+    
+    # Update lag features using recent history
+    # Lag features are like "daily_mean_cost_lag_1", "daily_std_cost_lag_1", etc.
+    for lag_col in [col for col in features if "_lag_" in col]:
+        lag_value = None
+        try:
+            # Extract lag number (e.g., "daily_mean_cost_lag_7" -> 7)
+            lag_num = int(lag_col.split("_lag_")[1])
+            
+            if freq.upper().startswith("M"):
+                # Monthly: look back by months (only use lag_1 for monthly)
+                if lag_num == 1:
+                    lag_date = next_date - DateOffset(months=1)
+                    # Convert date_col to datetime for comparison
+                    df_dates = pd.to_datetime(df[date_col], errors="coerce")
+                    lag_rows = df[df_dates <= lag_date]
+                    if not lag_rows.empty:
+                        # Get the base feature (e.g., "daily_mean_cost" from "daily_mean_cost_lag_1")
+                        base_col = lag_col.replace("_lag_" + str(lag_num), "")
+                        if base_col in lag_rows.columns:
+                            lag_value = lag_rows.iloc[-1][base_col]
+                        elif lag_col in lag_rows.columns:
+                            lag_value = lag_rows.iloc[-1][lag_col]
+                else:
+                    # For longer lags in monthly, use lag_1 value
+                    base_col = lag_col.replace("_lag_" + str(lag_num), "")
+                    lag_1_col = base_col + "_lag_1"
+                    if lag_1_col in df.columns:
+                        lag_date = next_date - DateOffset(months=1)
+                        df_dates = pd.to_datetime(df[date_col], errors="coerce")
+                        lag_rows = df[df_dates <= lag_date]
+                        if not lag_rows.empty:
+                            base_col_clean = lag_1_col.replace("_lag_1", "")
+                            if base_col_clean in lag_rows.columns:
+                                lag_value = lag_rows.iloc[-1][base_col_clean]
+            else:
+                # Daily: look back by days
+                lag_date = next_date - timedelta(days=lag_num)
+                df_dates = pd.to_datetime(df[date_col], errors="coerce")
+                lag_rows = df[df_dates <= lag_date]
+                if not lag_rows.empty:
+                    # Get the base feature value from that date
+                    base_col = lag_col.replace("_lag_" + str(lag_num), "")
+                    if base_col in lag_rows.columns:
+                        lag_value = lag_rows.iloc[-1][base_col]
+                    elif lag_col in lag_rows.columns:
+                        lag_value = lag_rows.iloc[-1][lag_col]
+        except (ValueError, KeyError, IndexError):
+            pass
+        
+        if lag_value is not None and not pd.isna(lag_value):
+            next_row[lag_col] = lag_value
+        else:
+            # Fallback: use recent average of the lag column itself
+            if lag_col in df.columns:
+                next_row[lag_col] = df[lag_col].tail(30).mean() if len(df) >= 30 else df[lag_col].mean()
+            else:
+                # If lag column doesn't exist, try to compute from base column
+                try:
+                    base_col = lag_col.split("_lag_")[0]
+                    if base_col in df.columns:
+                        next_row[lag_col] = df[base_col].tail(30).mean() if len(df) >= 30 else df[base_col].mean()
+                except:
+                    pass
+    
+    # Use historical averages for weather/temperature features if predicting future
+    # Look for similar dates in history (same month, similar day of week)
+    if freq.upper().startswith("D"):
+        try:
+            # Convert date_col to datetime if needed
+            df_dates = pd.to_datetime(df[date_col], errors="coerce")
+            similar_mask = (
+                (df_dates.dt.month == next_date.month) & 
+                (df_dates.dt.dayofweek == next_date.dayofweek)
+            )
+            similar_dates = df[similar_mask]
+            if len(similar_dates) > 0:
+                # Update temperature and weather features from similar historical dates
+                for col in features:
+                    if any(x in col.lower() for x in ["temp", "temperature", "cdd", "hdd", "humidity", "precipitation"]):
+                        if col in similar_dates.columns:
+                            next_row[col] = similar_dates[col].mean()
+        except:
+            pass
+    
+    # Fill any remaining NaN features with recent averages
+    for col in features:
+        if col in next_row.columns and pd.isna(next_row[col].iloc[0]):
+            if col in df.columns:
+                next_row[col] = df[col].tail(30).mean() if len(df) >= 30 else df[col].mean()
+
+    X = next_row[features].fillna(method="ffill").fillna(method="bfill")
     pred = model.predict(X)[0]
 
     return pd.DataFrame(
@@ -129,7 +239,7 @@ def _predict_next(
             "target": [TARGET_COL],
             "prediction": [pred],
             "for": [next_label],
-            "feature_date": [next_row[date_col].iloc[0]],
+            "feature_date": [next_date],
         }
     )
 
