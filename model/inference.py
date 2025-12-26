@@ -9,7 +9,7 @@ Results are written to `results/predictions.csv`.
 """
 
 from __future__ import annotations
-from model.train import build_hourly_dataset
+
 
 
 from datetime import timedelta, datetime
@@ -27,6 +27,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from model.train import build_hourly_dataset
 
 RESULTS_DIR = ROOT / "results"
 HOURLY_MODEL_PATH = ROOT / "model" / "hourly_spend_model.pkl"
@@ -447,8 +448,10 @@ def run_inference():
     if last_hourly_timestamp < pd.to_datetime(current_hour):
         hourly_df = hourly_sorted.rename(columns={"timestamp": "date"})
         current_pred_hour = last_hourly_timestamp + timedelta(hours=1)
+        max_hours = 8760  # Max 1 year of hourly predictions
+        hour_count = 0
 
-        while current_pred_hour <= pd.to_datetime(current_hour):
+        while current_pred_hour <= pd.to_datetime(current_hour) and hour_count < max_hours:
             pred = _predict_next(
                 hourly_model,
                 hourly_features,
@@ -468,13 +471,16 @@ def run_inference():
             hourly_df = pd.concat([hourly_df, new_row], ignore_index=True)
 
             current_pred_hour += timedelta(hours=1)
+            hour_count += 1
 
     # Daily predictions: from last day + 1 to current day
     if last_daily_date < pd.to_datetime(current_day):
         daily_df = daily.rename(columns={"date": "date"})
         current_pred_day = last_daily_date + timedelta(days=1)
+        max_days = 365  # Max 1 year of daily predictions
+        day_count = 0
 
-        while current_pred_day <= pd.to_datetime(current_day):
+        while current_pred_day <= pd.to_datetime(current_day) and day_count < max_days:
             pred = _predict_next(
                 daily_model,
                 daily_features,
@@ -493,14 +499,17 @@ def run_inference():
             daily_df = pd.concat([daily_df, new_row], ignore_index=True)
 
             current_pred_day += timedelta(days=1)
+            day_count += 1
 
     # Monthly predictions: from last month + 1 to current month
     if last_monthly_date < pd.to_datetime(current_month):
         monthly_df = monthly.rename(columns={"year_month_start": "date"})
         current_pred_month = pd.to_datetime(
             last_monthly_date) + DateOffset(months=1)
+        max_months = 24  # Max 2 years of monthly predictions
+        month_count = 0
 
-        while current_pred_month <= pd.to_datetime(current_month):
+        while current_pred_month <= pd.to_datetime(current_month) and month_count < max_months:
             pred = _predict_next(
                 monthly_model,
                 monthly_features,
@@ -519,6 +528,7 @@ def run_inference():
             monthly_df = pd.concat([monthly_df, new_row], ignore_index=True)
 
             current_pred_month += DateOffset(months=1)
+            month_count += 1
 
     if all_predictions:
         results = pd.concat(all_predictions, ignore_index=True)
