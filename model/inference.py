@@ -298,7 +298,9 @@ def _predict_next(
         for col in features:
             if "_lag_" not in col and col in similar_row_actual.columns:
                 # Use actual value from similar historical period (not average - this gives variation)
-                next_row[col] = similar_row_actual[col].iloc[0]
+                val = similar_row_actual[col].iloc[0]
+                if not pd.isna(val):
+                    next_row[col] = val
 
     # For features not yet set or missing, use recent averages
     for col in features:
@@ -312,6 +314,10 @@ def _predict_next(
                     # Monthly: use average from last 12 months
                     next_row[col] = df[col].tail(12).mean() if len(
                         df) >= 12 else df[col].mean()
+                elif freq.upper().startswith("H"):
+                    # Hourly: use average from last 24 hours (same time period)
+                    next_row[col] = df[col].tail(24).mean() if len(
+                        df) >= 24 else df[col].mean()
                 else:
                     # Daily: use average from last 30 days
                     next_row[col] = df[col].tail(30).mean() if len(
@@ -319,10 +325,19 @@ def _predict_next(
 
     # Fill any remaining NaN features with recent averages
     for col in features:
-        if col in next_row.columns and pd.isna(next_row[col].iloc[0]):
-            if col in df.columns:
-                next_row[col] = df[col].tail(30).mean() if len(
-                    df) >= 30 else df[col].mean()
+        if col in next_row.columns:
+            col_val = next_row[col].iloc[0] if hasattr(next_row[col], 'iloc') else next_row[col]
+            if pd.isna(col_val):
+                if col in df.columns:
+                    if freq.upper().startswith("H"):
+                        # Hourly: use last 24 hours
+                        next_row[col] = df[col].tail(24).mean() if len(df) >= 24 else df[col].mean()
+                    elif freq.upper().startswith("M"):
+                        # Monthly: use last 12 months
+                        next_row[col] = df[col].tail(12).mean() if len(df) >= 12 else df[col].mean()
+                    else:
+                        # Daily: use last 30 days
+                        next_row[col] = df[col].tail(30).mean() if len(df) >= 30 else df[col].mean()
 
     X = next_row[features].fillna(method="ffill").fillna(method="bfill")
     pred = model.predict(X)[0]
