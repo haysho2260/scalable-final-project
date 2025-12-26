@@ -7,6 +7,10 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+# Typical CA residential consumption: ~700 kWh/month = ~0.8 kWh/hour average
+# Can be configured via environment variable for different household sizes
+RESIDENTIAL_KWH_PER_HOUR = float(os.getenv('RESIDENTIAL_KWH_PER_HOUR', '0.8'))
+
 
 def fetch_eia_prices():
     """
@@ -212,9 +216,9 @@ def process_hourly_prices():
                     price = price_row.iloc[0]['Monthly_Price_Cents_per_kWh']
                     df['Monthly_Price_Cents_per_kWh'] = price
 
-                    if 'CAISO Total' in df.columns:
-                        df['Estimated_Hourly_Cost_USD'] = df['CAISO Total'] * \
-                            1000 * (price / 100.0)
+                    # Calculate residential household cost (not system-wide)
+                    # Using configurable kWh/hour consumption rate
+                    df['Estimated_Hourly_Cost_USD'] = RESIDENTIAL_KWH_PER_HOUR * (price / 100.0)
                 else:
                     print(f"  Warning: No price found for {year}-{month}")
                     df['Monthly_Price_Cents_per_kWh'] = pd.NA
