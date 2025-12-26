@@ -154,7 +154,7 @@ def _train_and_eval(
     exclude = set(feature_exclude) | {target_col}
     feature_cols = [
         c for c in data.columns if c not in exclude and pd.api.types.is_numeric_dtype(data[c])]
-    X = data[feature_cols].fillna(method="ffill").fillna(method="bfill")
+    X = data[feature_cols].ffill().bfill()
 
     # Time-based split: last 20% for test
     split_idx = int(len(X) * 0.8)

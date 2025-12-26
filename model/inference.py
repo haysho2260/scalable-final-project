@@ -9,6 +9,7 @@ Results are written to `results/predictions.csv`.
 """
 
 from __future__ import annotations
+from model.train import build_hourly_dataset
 
 
 from datetime import timedelta, datetime
@@ -26,7 +27,6 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from model.train import build_hourly_dataset
 
 RESULTS_DIR = ROOT / "results"
 HOURLY_MODEL_PATH = ROOT / "model" / "hourly_spend_model.pkl"
@@ -395,7 +395,7 @@ def _predict_next(
                     if not pd.isna(recent_val) and recent_val != 0:
                         next_row[col] = recent_val
 
-    X = next_row[features].fillna(method="ffill").fillna(method="bfill")
+    X = next_row[features].ffill().bfill()
     pred = model.predict(X)[0]
 
     # Ensure prediction is not negative (costs can't be negative)
