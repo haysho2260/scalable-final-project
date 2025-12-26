@@ -50,7 +50,7 @@ jobs:
       - name: Check existing models
         id: models
         run: |
-          if [ -f model/daily_spend_model.pkl ] && [ -f model/monthly_spend_model.pkl ]; then
+          if [ -f model/hourly_spend_model.pkl ] && [ -f model/daily_spend_model.pkl ] && [ -f model/monthly_spend_model.pkl ]; then
             echo "models_present=true" >> $GITHUB_OUTPUT
           else
             echo "models_present=false" >> $GITHUB_OUTPUT
@@ -68,7 +68,7 @@ jobs:
       - name: Re-check models (after training or if training was skipped)
         id: models_after_train
         run: |
-          if [ -f model/daily_spend_model.pkl ] && [ -f model/monthly_spend_model.pkl ]; then
+          if [ -f model/hourly_spend_model.pkl ] && [ -f model/daily_spend_model.pkl ] && [ -f model/monthly_spend_model.pkl ]; then
             echo "models_present=true" >> $GITHUB_OUTPUT
           else
             echo "models_present=false" >> $GITHUB_OUTPUT
@@ -90,6 +90,7 @@ jobs:
         with:
           name: trained-models
           path: |
+            model/hourly_spend_model.pkl
             model/daily_spend_model.pkl
             model/monthly_spend_model.pkl
           retention-days: 7
@@ -131,7 +132,7 @@ jobs:
       - name: Verify models exist
         id: check_models
         run: |
-          if [ -f model/daily_spend_model.pkl ] && [ -f model/monthly_spend_model.pkl ]; then
+          if [ -f model/hourly_spend_model.pkl ] && [ -f model/daily_spend_model.pkl ] && [ -f model/monthly_spend_model.pkl ]; then
             echo "models_exist=true" >> $GITHUB_OUTPUT
             echo "Models found, proceeding with inference..."
           else

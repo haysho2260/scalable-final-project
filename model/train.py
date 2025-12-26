@@ -212,7 +212,13 @@ def train_daily_and_monthly():
     )
     monthly["year_month_start"] = monthly["year_month"].dt.to_timestamp()
 
-    # Train models
+    # Train models (hourly, daily, monthly)
+    _, hourly_metrics = _train_and_eval(
+        hourly,
+        target_col=target,
+        model_path=ROOT / "model" / "hourly_spend_model.pkl",
+        feature_exclude=["timestamp", "Date", "HE", "date", "year_month"],
+    )
     _, daily_metrics = _train_and_eval(
         daily,
         target_col=target,
@@ -226,18 +232,19 @@ def train_daily_and_monthly():
         feature_exclude=["year_month"],
     )
 
-    return {"daily": daily_metrics, "monthly": monthly_metrics}
+    return {"hourly": hourly_metrics, "daily": daily_metrics, "monthly": monthly_metrics}
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Train daily and monthly residential spending models.")
+        description="Train hourly, daily and monthly residential spending models.")
     parser.add_argument("--print-metrics", action="store_true",
                         help="Print evaluation metrics after training.")
     args = parser.parse_args()
 
     metrics = train_daily_and_monthly()
     if args.print_metrics:
+        print("Hourly metrics:", metrics["hourly"])
         print("Daily metrics:", metrics["daily"])
         print("Monthly metrics:", metrics["monthly"])
 

@@ -77,9 +77,35 @@ def build():
     SITE_DIR.mkdir(parents=True, exist_ok=True)
 
     preds = _read_csv(RESULTS_DIR / "predictions.csv")
+    hourly_history = _read_csv(RESULTS_DIR / "hourly_history.csv")
     daily = _read_csv(RESULTS_DIR / "daily_history.csv")
     monthly = _read_csv(RESULTS_DIR / "monthly_history.csv")
-    hourly = _load_hourly_data()
+    hourly_features = _load_hourly_data()
+
+    # Use hourly history if available, otherwise fall back to features
+    if not hourly_history.empty and "Estimated_Hourly_Cost_USD" in hourly_history.columns:
+        hourly = hourly_history.copy()
+        if "timestamp" in hourly.columns:
+            hourly["timestamp"] = pd.to_datetime(
+                hourly["timestamp"], errors="coerce")
+        elif "Date" in hourly.columns and "HE" in hourly.columns:
+            hourly["Date"] = pd.to_datetime(hourly["Date"], errors="coerce")
+            hourly["HE"] = pd.to_numeric(hourly["HE"], errors="coerce")
+            hourly = hourly.dropna(
+                subset=["Date", "HE", "Estimated_Hourly_Cost_USD"])
+            hourly["timestamp"] = hourly["Date"] + \
+                pd.to_timedelta(hourly["HE"] - 1, unit="h")
+        else:
+            hourly = hourly_features
+        if "timestamp" in hourly.columns:
+            hourly["hour"] = hourly["timestamp"].dt.hour
+            hourly["dayofweek"] = hourly["timestamp"].dt.dayofweek
+            hourly["month"] = hourly["timestamp"].dt.month
+            hourly["year"] = hourly["timestamp"].dt.year
+            if "Date" not in hourly.columns:
+                hourly["Date"] = hourly["timestamp"].dt.date
+    else:
+        hourly = hourly_features
 
     # Normalize all costs to per-household
     hourly = _normalize_to_per_household(hourly)

@@ -9,6 +9,7 @@ Results are written to `results/predictions.csv`.
 """
 
 from __future__ import annotations
+from model.train import build_hourly_dataset
 
 from datetime import timedelta
 from pathlib import Path
@@ -25,9 +26,9 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from model.train import build_hourly_dataset
 
 RESULTS_DIR = ROOT / "results"
+HOURLY_MODEL_PATH = ROOT / "model" / "hourly_spend_model.pkl"
 DAILY_MODEL_PATH = ROOT / "model" / "daily_spend_model.pkl"
 MONTHLY_MODEL_PATH = ROOT / "model" / "monthly_spend_model.pkl"
 TARGET_COL = "Estimated_Hourly_Cost_USD"
@@ -114,6 +115,12 @@ def _predict_next(
     # Calculate next date
     if freq.upper().startswith("M"):
         next_date = pd.to_datetime(last_date) + DateOffset(months=1)
+    elif freq.upper().startswith("H"):
+        # Hourly: add 1 hour
+        if isinstance(last_date, pd.Timestamp):
+            next_date = last_date + timedelta(hours=1)
+        else:
+            next_date = pd.to_datetime(last_date) + timedelta(hours=1)
     elif isinstance(last_date, pd.Timestamp):
         next_date = last_date + timedelta(days=1)
     else:
@@ -313,12 +320,27 @@ def run_inference():
 
     daily, monthly = _build_daily_and_monthly(hourly)
     # Persist history for dashboard use
+    hourly_history = hourly[["timestamp", "Date", "HE", TARGET_COL]].copy()
+    hourly_history.to_csv(RESULTS_DIR / "hourly_history.csv", index=False)
     daily.to_csv(RESULTS_DIR / "daily_history.csv", index=False)
     monthly.to_csv(RESULTS_DIR / "monthly_history.csv", index=False)
 
+    hourly_model, hourly_features = _load_model(HOURLY_MODEL_PATH)
     daily_model, daily_features = _load_model(DAILY_MODEL_PATH)
     monthly_model, monthly_features = _load_model(MONTHLY_MODEL_PATH)
 
+    # Predict next hour
+    hourly_sorted = hourly.sort_values("timestamp")
+    next_hour_pred = _predict_next(
+        hourly_model,
+        hourly_features,
+        hourly_sorted.rename(columns={"timestamp": "date"}),
+        "date",
+        "next_hour",
+        freq="H",
+    )
+
+    # Predict next day
     next_day_pred = _predict_next(
         daily_model,
         daily_features,
@@ -327,6 +349,8 @@ def run_inference():
         "next_day",
         freq="D",
     )
+
+    # Predict next month
     next_month_pred = _predict_next(
         monthly_model,
         monthly_features,
@@ -336,7 +360,8 @@ def run_inference():
         freq="M",
     )
 
-    results = pd.concat([next_day_pred, next_month_pred], ignore_index=True)
+    results = pd.concat([next_hour_pred, next_day_pred,
+                        next_month_pred], ignore_index=True)
     out_path = RESULTS_DIR / "predictions.csv"
     results.to_csv(out_path, index=False)
     return out_path, results
