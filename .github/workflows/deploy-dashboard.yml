@@ -61,13 +61,17 @@ jobs:
           python model/train.py --print-metrics
           echo "trained=true" >> $GITHUB_OUTPUT
 
-      - name: Set trained flag if models already exist
-        if: steps.models.outputs.models_present == 'true'
+      - name: Re-check models (after training or if training was skipped)
+        id: models_after_train
         run: |
-          echo "trained=false" >> $GITHUB_OUTPUT
+          if [ -f model/daily_spend_model.pkl ] && [ -f model/monthly_spend_model.pkl ]; then
+            echo "models_present=true" >> $GITHUB_OUTPUT
+          else
+            echo "models_present=false" >> $GITHUB_OUTPUT
+          fi
 
-      - name: Upload models artifact (always upload if models exist)
-        if: steps.models.outputs.models_present == 'true'
+      - name: Upload models artifact (upload if models exist)
+        if: steps.models_after_train.outputs.models_present == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: trained-models
