@@ -423,7 +423,9 @@ def build():
     else:
         html_parts.append("<p class='text-muted'>No daily data available.</p>")
 
-        # Average by day of week
+    # Average by day of week (show if we have daily data)
+    if not daily.empty and "Estimated_Hourly_Cost_USD" in daily:
+        daily["date"] = pd.to_datetime(daily["date"])
         daily["day_name"] = daily["date"].dt.day_name()
         daily_avg = daily.groupby("day_name")[
             "Estimated_Hourly_Cost_USD"].mean().reset_index()
@@ -456,8 +458,6 @@ def build():
                 f"<p class='mb-0'><strong>Action:</strong> Schedule energy-intensive activities on lower-cost days when possible.</p>"
                 f"</div></div>"
             )
-    else:
-        html_parts.append("<p class='text-muted'>No daily data available.</p>")
     html_parts.append("</div>")
 
     # Weekly section
