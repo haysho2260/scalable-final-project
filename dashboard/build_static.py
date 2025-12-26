@@ -133,11 +133,11 @@ def build():
 
         # Peak day of week
         daily_avg = hourly.groupby("dayofweek")[
-            "Estimated_Hourly_Cost_USD"].sum()
+            "Estimated_Hourly_Cost_USD"].mean()
         day_names = ["Monday", "Tuesday", "Wednesday",
                      "Thursday", "Friday", "Saturday", "Sunday"]
         insights["peak_day"] = day_names[daily_avg.idxmax()]
-        insights["peak_day_cost"] = daily_avg.max()
+        insights["peak_day_cost"] = daily_avg.max() * 24.0 # Scale to daily total
 
     if not monthly.empty:
         monthly["year_month_start"] = pd.to_datetime(
@@ -149,7 +149,7 @@ def build():
         insights["peak_month"] = month_names[monthly_avg.idxmax() - 1]
         insights["peak_month_cost"] = monthly_avg.max()
         insights["avg_monthly"] = monthly["Estimated_Hourly_Cost_USD"].mean()
-        insights["total_yearly"] = monthly["Estimated_Hourly_Cost_USD"].sum() if len(
+        insights["total_yearly"] = monthly.tail(12)["Estimated_Hourly_Cost_USD"].sum() if len(
             monthly) >= 12 else None
 
     html_parts = [
@@ -160,8 +160,8 @@ def build():
         "<script src='https://cdn.plot.ly/plotly-latest.min.js'></script>",
         "<style>",
         "body { font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f8f9fa; }",
-        ".navbar { z-index: 1030; }",
-        ".sidebar { background-color: #212529; color: #e5e7eb; min-height: calc(100vh - 56px); padding: 1rem; position: fixed; left: 0; top: 56px; z-index: 1020; transition: transform 0.3s ease; width: 250px; border-top: 1px solid rgba(255,255,255,0.1); }",
+        ".navbar { z-index: 1030; margin-bottom: 0 !important; }",
+        ".sidebar { background-color: #212529; color: #e5e7eb; min-height: calc(100vh - 56px); padding: 1rem; position: fixed; left: 0; top: 56px; z-index: 1020; transition: transform 0.3s ease, margin-left 0.3s ease; width: 250px; border-top: 1px solid rgba(255,255,255,0.1); }",
         ".sidebar h6 { font-size: 0.75rem; letter-spacing: .08em; text-transform: uppercase; color: #9ca3af; margin-bottom: 1rem; }",
         ".sidebar .form-label { font-size: 0.8rem; color: #d1d5db; margin-bottom: 0.5rem; }",
         ".sidebar .form-select { background-color: #343a40; border-color: #495057; color: #e5e7eb; }",
@@ -170,18 +170,20 @@ def build():
         ".insight-value { font-size: 1.5rem; font-weight: 600; color: #3b82f6; }",
         "table { font-size: 0.8rem; }",
         ".stat-card { background: white; border-radius: 8px; padding: 1rem; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }",
-        ".sidebar.hidden { transform: translateX(-100%); }",
+        ".sidebar.hidden { transform: translateX(-250px); }",
         ".hamburger-btn { background: none; border: none; color: white; font-size: 1.5rem; padding: 0.5rem; cursor: pointer; margin-right: 0.5rem; }",
         ".hamburger-btn:hover { opacity: 0.8; }",
         ".sidebar-overlay { display: none; position: fixed; top: 56px; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); z-index: 999; }",
         ".sidebar-overlay.show { display: block; }",
         "@media (min-width: 768px) { .sidebar-overlay { display: none !important; } }",
-        "@media (min-width: 768px) { .sidebar { position: relative; top: 0; transform: none !important; width: auto; min-height: 100vh; border-top: none; } }",
-        "main { transition: margin-left 0.3s ease; }",
+        "@media (min-width: 768px) { .sidebar { position: fixed; transform: none; } .sidebar.hidden { transform: translateX(-250px); } }",
+        "main { transition: margin-left 0.3s ease; margin-left: 250px; }",
+        "main.full-width { margin-left: 0; }",
+        "@media (max-width: 767px) { main { margin-left: 0; } }",
         "</style>",
         "</head>",
         "<body>",
-        "<nav class='navbar navbar-dark bg-dark px-3 mb-3'>",
+        "<nav class='navbar navbar-dark bg-dark px-3'>",
         "<button class='hamburger-btn' id='sidebar-toggle' aria-label='Toggle menu'>☰</button>",
         "<span class='navbar-brand ms-2'>Residential Energy Spending per Household</span>",
         "</nav>",
@@ -877,14 +879,20 @@ def build():
     # JavaScript for toggling
     html_parts.append("""
 <script>
-  // Sidebar toggle functionality
   const sidebarToggle = document.getElementById('sidebar-toggle');
   const sidebar = document.getElementById('sidebar');
   const sidebarOverlay = document.getElementById('sidebar-overlay');
+  const mainContent = document.querySelector('main');
   
   function toggleSidebar() {
-    sidebar.classList.toggle('hidden');
-    if (window.innerWidth < 768) {
+    const isHidden = sidebar.classList.toggle('hidden');
+    if (window.innerWidth >= 768) {
+      if (isHidden) {
+        mainContent.classList.add('full-width');
+      } else {
+        mainContent.classList.remove('full-width');
+      }
+    } else {
       sidebarOverlay.classList.toggle('show');
     }
   }
@@ -898,9 +906,11 @@ def build():
   function updateSidebarState() {
     if (window.innerWidth >= 768) {
       sidebar.classList.remove('hidden');
+      mainContent.classList.remove('full-width');
       if (sidebarOverlay) sidebarOverlay.classList.remove('show');
     } else {
       sidebar.classList.add('hidden');
+      mainContent.classList.add('full-width');
       if (sidebarOverlay) sidebarOverlay.classList.remove('show');
     }
   }
@@ -917,22 +927,26 @@ def build():
     monthly: document.getElementById('monthly-section'),
     yearly: document.getElementById('yearly-section'),
   };
+  
   function updateView() {
     const val = select.value;
     for (const key in sections) {
-      sections[key].style.display = key === val ? 'block' : 'none';
+      if (sections[key]) {
+        sections[key].style.display = key === val ? 'block' : 'none';
+      }
     }
+    // Filter predictions table to match the selected view
+    runFilter();
   }
   select.addEventListener('change', updateView);
-  updateView();
 
   // Predictions Table Filtering
-  function filterPredictionsTable(selectedDate) {
+  function filterPredictionsTable(granularity, selectedDate) {
     const table = document.getElementById('predictions-table');
     if (!table) return;
     
     const rows = table.querySelectorAll('.prediction-row');
-    const selectedMonth = selectedDate.substring(0, 7); // YYYY-MM
+    const selectedMonth = selectedDate ? selectedDate.substring(0, 7) : null;
     
     rows.forEach(row => {
       const rowDate = row.getAttribute('data-date');
@@ -940,17 +954,23 @@ def build():
       const rowFor = row.cells[2].innerText.toLowerCase();
       
       let show = false;
-      if (rowFor.includes('hour')) {
-        // Show hourly predictions only for the exact selected date
-        show = (rowDate === selectedDate);
-      } else if (rowFor.includes('day')) {
-        // Show daily predictions only for the exact selected date
-        show = (rowDate === selectedDate);
-      } else if (rowFor.includes('month')) {
-        // Show monthly predictions for the selected month
-        show = (rowMonth === selectedMonth);
-      } else {
-        // Fallback or general next_month/next_day labels
+      
+      if (granularity === 'hourly' && rowFor.includes('hour')) {
+        // If we have a matching date, filter strictly. Otherwise show all hourly.
+        show = !selectedDate || (rowDate === selectedDate);
+        if (!show && !selectedDate) show = true; 
+        // Logic: if granularity matches type, show it. 
+        // We only hide if a specific date is picked AND it doesn't match.
+        // But since predictions are FUTURE and selector is HISTORICAL, they rarely match.
+        // So let's show all for the granularity by default.
+        show = true; 
+      } else if (granularity === 'daily' && rowFor.includes('day')) {
+        show = true;
+      } else if (granularity === 'monthly' && rowFor.includes('month')) {
+        show = true;
+      } else if (granularity === 'weekly' && rowFor.includes('week')) {
+        show = true;
+      } else if (granularity === 'yearly' && rowFor.includes('year')) {
         show = true;
       }
       
@@ -958,19 +978,30 @@ def build():
     });
   }
 
+  function runFilter() {
+    const granularity = select.value;
+    let date = "";
+    if (granularity === 'hourly') {
+      date = document.getElementById('hourlyDateSelect')?.value || "";
+    } else if (granularity === 'daily') {
+      date = document.getElementById('daily-date-select')?.value || "";
+    }
+    filterPredictionsTable(granularity, date);
+  }
+
   // Hook into existing date selectors
   const hourlyDateSelect = document.getElementById('hourlyDateSelect');
   const dailyDateSelect = document.getElementById('daily-date-select');
   
   if (hourlyDateSelect) {
-    hourlyDateSelect.addEventListener('change', (e) => filterPredictionsTable(e.target.value));
-    // Initial filter if table exists
-    filterPredictionsTable(hourlyDateSelect.value);
+    hourlyDateSelect.addEventListener('change', runFilter);
   }
-  
   if (dailyDateSelect) {
-    dailyDateSelect.addEventListener('change', (e) => filterPredictionsTable(e.target.value));
+    dailyDateSelect.addEventListener('change', runFilter);
   }
+
+  // Initial update
+  updateView();
 </script>
 """)
 
