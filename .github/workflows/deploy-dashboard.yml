@@ -76,14 +76,23 @@ jobs:
             model/monthly_spend_model.pkl
           retention-days: 7
 
-      - name: Fail if models missing and not training
+      - name: Set models missing flag (daily schedule only)
+        id: daily_models_missing
         if: |
           steps.models.outputs.models_present == 'false' &&
-          !((github.event_name == 'schedule' && github.event.schedule == '0 8 * * 1') ||
-            (github.event_name == 'push'))
+          github.event_name == 'schedule' &&
+          github.event.schedule == '0 7 * * *'
         run: |
-          echo "ERROR: Models are missing and this is not a training run."
-          echo "Models will be trained on weekly schedule (Monday 08:00 UTC) or on push if missing."
+          echo "WARNING: Models are missing on daily schedule."
+          echo "Inference will be skipped. Models will be trained on weekly schedule (Monday 08:00 UTC)."
+          echo "models_missing=true" >> $GITHUB_OUTPUT
+
+      - name: Fail if models missing on push
+        if: |
+          steps.models.outputs.models_present == 'false' &&
+          github.event_name == 'push'
+        run: |
+          echo "ERROR: Models are missing on push. Training should have occurred."
           exit 1
 
   inference:
@@ -111,15 +120,41 @@ jobs:
         continue-on-error: true
 
       - name: Verify models exist
+        id: check_models
         run: |
           if [ ! -f model/daily_spend_model.pkl ] || [ ! -f model/monthly_spend_model.pkl ]; then
-            echo "ERROR: Models not found. Models must be trained first."
-            echo "Training runs on:"
-            echo "  - Weekly schedule (Monday 08:00 UTC)"
-            echo "  - Push to main (if models are missing)"
-            exit 1
+            if [ "${{ github.event_name }}" == "push" ]; then
+              echo "ERROR: Models not found on push. Training should have occurred in train job."
+              exit 1
+            fi
+            echo "models_exist=false" >> $GITHUB_OUTPUT
+            echo "WARNING: Models not found."
+          else
+            echo "models_exist=true" >> $GITHUB_OUTPUT
+            echo "Models found, proceeding with inference..."
           fi
-          echo "Models found, proceeding with inference..."
+
+      - name: Run inference
+        if: steps.check_models.outputs.models_exist == 'true'
+        run: python model/inference.py
+
+      - name: Skip inference message (daily schedule only)
+        if: |
+          steps.check_models.outputs.models_exist == 'false' &&
+          github.event_name == 'schedule'
+        run: |
+          echo "Skipping inference - models not available on daily schedule."
+          echo "Models will be available after weekly training (Monday 08:00 UTC)."
+
+      - name: Build static dashboard
+        if: steps.check_models.outputs.models_exist == 'true'
+        run: python dashboard/build_static.py
+
+      - name: Upload dashboard artifact
+        if: steps.check_models.outputs.models_exist == 'true'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
 
       - name: Run inference (daily or on push if results missing)
         run: python model/inference.py
