@@ -67,6 +67,8 @@ def _load_hourly_data() -> pd.DataFrame:
     hourly = hourly.sort_values(
         "timestamp").drop_duplicates(subset="timestamp")
     hourly["hour"] = hourly["timestamp"].dt.hour
+    # Ensure hours are in valid range 0-23
+    hourly["hour"] = hourly["hour"].clip(0, 23)
     hourly["dayofweek"] = hourly["timestamp"].dt.dayofweek
     hourly["month"] = hourly["timestamp"].dt.month
     hourly["year"] = hourly["timestamp"].dt.year
@@ -99,6 +101,8 @@ def build():
             hourly = hourly_features
         if "timestamp" in hourly.columns:
             hourly["hour"] = hourly["timestamp"].dt.hour
+            # Ensure hours are in valid range 0-23
+            hourly["hour"] = hourly["hour"].clip(0, 23)
             hourly["dayofweek"] = hourly["timestamp"].dt.dayofweek
             hourly["month"] = hourly["timestamp"].dt.month
             hourly["year"] = hourly["timestamp"].dt.year
@@ -305,22 +309,178 @@ def build():
         except Exception:
             pass  # Skip heatmap if pivot fails
 
-        # Average by hour of day
-        hourly_avg = hourly.groupby(
-            "hour")["Estimated_Hourly_Cost_USD"].mean().reset_index()
-        fig_hour_avg = px.line(
-            hourly_avg, x="hour", y="Estimated_Hourly_Cost_USD",
-            title="Average Residential Cost per Household per Hour of Day",
-            labels={"hour": "Hour of Day",
-                    "Estimated_Hourly_Cost_USD": "Cost per Household (USD)"},
-            markers=True
-        )
-        fig_hour_avg.update_xaxes(dtick=1)
+        # Average Cost by Hour - with date selector
+        # Get available dates
+        if "Date" in hourly.columns:
+            hourly["Date"] = pd.to_datetime(hourly["Date"], errors="coerce")
+            available_dates = sorted(
+                hourly["Date"].dt.date.unique(), reverse=True)
+        elif "timestamp" in hourly.columns:
+            available_dates = sorted(
+                hourly["timestamp"].dt.date.unique(), reverse=True)
+        else:
+            available_dates = []
+
+        default_date = available_dates[0] if len(available_dates) > 0 else None
+
         html_parts.append(
             "<div class='card mb-3'><div class='card-header fw-semibold'>Average Cost by Hour</div><div class='card-body'>"
         )
-        html_parts.append(fig_hour_avg.to_html(
-            full_html=False, include_plotlyjs=False))
+
+        if default_date:
+            # Date selector and time format toggle
+            html_parts.append(
+                f"<div class='mb-3 d-flex gap-3 align-items-center flex-wrap'>"
+                f"<label for='hourlyDateSelect' class='form-label mb-0'><strong>Select Date:</strong></label>"
+                f"<select id='hourlyDateSelect' class='form-select' style='width: auto; min-width: 200px;'>"
+            )
+            for date in available_dates:
+                selected = "selected" if date == default_date else ""
+                html_parts.append(
+                    f"<option value='{date}' {selected}>{date}</option>")
+            html_parts.append("</select>")
+
+            html_parts.append(
+                f"<label for='hourlyTimeFormat' class='form-label mb-0'><strong>Time Format:</strong></label>"
+                f"<select id='hourlyTimeFormat' class='form-select' style='width: auto; min-width: 150px;'>"
+                f"<option value='24'>24-Hour (00:00)</option>"
+                f"<option value='12'>12-Hour (12:00 AM)</option>"
+                f"</select>"
+                f"</div>"
+            )
+
+            # Prepare hourly data for JavaScript
+            hourly_data_list = []
+            date_col = "Date" if "Date" in hourly.columns else "timestamp"
+            for _, row in hourly.iterrows():
+                try:
+                    date_val = row[date_col]
+                    if pd.isna(date_val):
+                        continue
+                    if hasattr(date_val, 'date'):
+                        date_str = str(date_val.date())
+                    else:
+                        date_str = str(date_val)
+                    hour_val = int(row["hour"]) if not pd.isna(
+                        row["hour"]) else 0
+                    # Ensure hour is in valid range 0-23
+                    hour_val = max(0, min(23, hour_val))
+                    hourly_data_list.append({
+                        "date": date_str,
+                        "hour": hour_val,
+                        "cost": float(row["Estimated_Hourly_Cost_USD"]) if not pd.isna(row["Estimated_Hourly_Cost_USD"]) else 0.0
+                    })
+                except Exception:
+                    continue
+
+            hourly_data_json = json.dumps(hourly_data_list)
+
+            # Generate initial chart for default date
+            selected_data = hourly[hourly[date_col].dt.date ==
+                                   default_date] if date_col in hourly.columns else pd.DataFrame()
+            if not selected_data.empty:
+                selected_data = selected_data.sort_values("hour")
+                # Format hours for 24-hour display
+                hour_labels_24 = [
+                    f"{int(h):02d}:00" for h in selected_data["hour"]]
+
+                fig_hour_avg = go.Figure()
+                fig_hour_avg.add_trace(go.Scatter(
+                    x=selected_data["hour"],
+                    y=selected_data["Estimated_Hourly_Cost_USD"],
+                    mode='lines+markers',
+                    name='Cost per Hour',
+                    hovertemplate='<b>%{text}</b><br>Cost: $%{y:.4f}<extra></extra>',
+                    text=hour_labels_24
+                ))
+                fig_hour_avg.update_layout(
+                    title=f"Hourly Residential Cost per Household - {default_date}",
+                    xaxis_title="Hour of Day",
+                    yaxis_title="Cost per Household (USD)",
+                    xaxis=dict(
+                        tickmode='array',
+                        tickvals=selected_data["hour"].tolist(),
+                        ticktext=hour_labels_24,
+                        dtick=1
+                    ),
+                    height=500
+                )
+                html_parts.append(fig_hour_avg.to_html(
+                    full_html=False, include_plotlyjs=False, div_id="hourlyChartContainer"))
+
+            # JavaScript to handle date selection and time format toggle
+            html_parts.append(f"""
+            <script>
+            (function() {{
+                const dateSelect = document.getElementById('hourlyDateSelect');
+                const timeFormatSelect = document.getElementById('hourlyTimeFormat');
+                const chartContainer = document.getElementById('hourlyChartContainer');
+                const hourlyData = {hourly_data_json};
+                
+                function formatHour24(hour) {{
+                    return String(Math.floor(hour)).padStart(2, '0') + ':00';
+                }}
+                
+                function formatHour12(hour) {{
+                    const h = Math.floor(hour);
+                    const period = h >= 12 ? 'PM' : 'AM';
+                    const displayHour = h === 0 ? 12 : (h > 12 ? h - 12 : h);
+                    return displayHour + ':00 ' + period;
+                }}
+                
+                function updateHourlyChart() {{
+                    const selectedDate = dateSelect.value;
+                    const timeFormat = timeFormatSelect.value;
+                    const is24Hour = timeFormat === '24';
+                    
+                    // Filter data for selected date
+                    const filtered = hourlyData.filter(d => d.date === selectedDate);
+                    filtered.sort((a, b) => a.hour - b.hour);
+                    
+                    if (filtered.length === 0) {{
+                        chartContainer.innerHTML = '<p class="text-muted">No data available for this date.</p>';
+                        return;
+                    }}
+                    
+                    const hours = filtered.map(d => d.hour);
+                    const costs = filtered.map(d => d.cost);
+                    const hourLabels = hours.map(h => is24Hour ? formatHour24(h) : formatHour12(h));
+                    
+                    const trace = {{
+                        x: hours,
+                        y: costs,
+                        mode: 'lines+markers',
+                        type: 'scatter',
+                        name: 'Cost per Hour',
+                        hovertemplate: '<b>%{{text}}</b><br>Cost: $%{{y:.4f}}<extra></extra>',
+                        text: hourLabels
+                    }};
+                    
+                    const layout = {{
+                        title: `Hourly Residential Cost per Household - ${{selectedDate}}`,
+                        xaxis: {{
+                            title: 'Hour of Day',
+                            tickmode: 'array',
+                            tickvals: hours,
+                            ticktext: hourLabels,
+                            dtick: 1
+                        }},
+                        yaxis: {{ title: 'Cost per Household (USD)' }},
+                        height: 500
+                    }};
+                    
+                    Plotly.newPlot('hourlyChartContainer', [trace], layout, {{responsive: true}});
+                }}
+                
+                dateSelect.addEventListener('change', updateHourlyChart);
+                timeFormatSelect.addEventListener('change', updateHourlyChart);
+            }})();
+            </script>
+            """)
+        else:
+            html_parts.append(
+                "<p class='text-muted'>No hourly data available.</p>")
+
         html_parts.append("</div></div>")
 
         # Insights

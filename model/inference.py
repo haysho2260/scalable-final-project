@@ -9,6 +9,7 @@ Results are written to `results/predictions.csv`.
 """
 
 from __future__ import annotations
+from model.train import build_hourly_dataset
 
 
 from datetime import timedelta
@@ -26,7 +27,6 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from model.train import build_hourly_dataset
 
 RESULTS_DIR = ROOT / "results"
 HOURLY_MODEL_PATH = ROOT / "model" / "hourly_spend_model.pkl"
@@ -289,14 +289,24 @@ def _predict_next(
                     pass
 
     # Use historical values from similar periods (not just averages - use actual values for variation)
+    # Priority: ensure critical features (CAISO Total, price) are set from similar periods
+    critical_features = ["CAISO Total", "Monthly_Price_Cents_per_kWh"]
+
     if not similar_rows.empty:
         # Use the most recent similar period's actual values (gives natural variation)
         # Use iloc[[-1]] to ensure we get a DataFrame
         similar_row_actual = similar_rows.iloc[[-1]].copy()
 
-        # Update all features from similar historical periods (except lag features which are handled separately)
+        # First, set critical features from similar periods (these are essential for accurate predictions)
+        for col in critical_features:
+            if col in features and col in similar_row_actual.columns:
+                val = similar_row_actual[col].iloc[0]
+                if not pd.isna(val) and val != 0:
+                    next_row[col] = val
+
+        # Then update all other features from similar historical periods (except lag features which are handled separately)
         for col in features:
-            if "_lag_" not in col and col in similar_row_actual.columns:
+            if "_lag_" not in col and col not in critical_features and col in similar_row_actual.columns:
                 # Use actual value from similar historical period (not average - this gives variation)
                 val = similar_row_actual[col].iloc[0]
                 if not pd.isna(val):
@@ -323,24 +333,71 @@ def _predict_next(
                     next_row[col] = df[col].tail(30).mean() if len(
                         df) >= 30 else df[col].mean()
 
+    # Ensure critical features are set even if similar_rows was empty
+    for col in critical_features:
+        if col in features:
+            if col not in next_row.columns or pd.isna(next_row[col].iloc[0] if hasattr(next_row[col], 'iloc') else next_row[col]) or (next_row[col].iloc[0] if hasattr(next_row[col], 'iloc') else next_row[col]) == 0:
+                if col in df.columns:
+                    # For hourly, try to get from same hour of day from recent days
+                    if freq.upper().startswith("H") and "hour" in next_row.columns:
+                        hour = int(next_row["hour"].iloc[0] if hasattr(
+                            next_row["hour"], 'iloc') else next_row["hour"])
+                        same_hour_data = df[df["hour"] ==
+                                            hour] if "hour" in df.columns else df
+                        if not same_hour_data.empty:
+                            next_row[col] = same_hour_data[col].tail(7).mean() if len(
+                                same_hour_data) >= 7 else same_hour_data[col].mean()
+                        else:
+                            next_row[col] = df[col].tail(24).mean() if len(
+                                df) >= 24 else df[col].mean()
+                    else:
+                        # For daily/monthly, use recent average
+                        if freq.upper().startswith("M"):
+                            next_row[col] = df[col].tail(12).mean() if len(
+                                df) >= 12 else df[col].mean()
+                        else:
+                            next_row[col] = df[col].tail(30).mean() if len(
+                                df) >= 30 else df[col].mean()
+
     # Fill any remaining NaN features with recent averages
     for col in features:
         if col in next_row.columns:
-            col_val = next_row[col].iloc[0] if hasattr(next_row[col], 'iloc') else next_row[col]
+            col_val = next_row[col].iloc[0] if hasattr(
+                next_row[col], 'iloc') else next_row[col]
             if pd.isna(col_val):
                 if col in df.columns:
                     if freq.upper().startswith("H"):
                         # Hourly: use last 24 hours
-                        next_row[col] = df[col].tail(24).mean() if len(df) >= 24 else df[col].mean()
+                        next_row[col] = df[col].tail(24).mean() if len(
+                            df) >= 24 else df[col].mean()
                     elif freq.upper().startswith("M"):
                         # Monthly: use last 12 months
-                        next_row[col] = df[col].tail(12).mean() if len(df) >= 12 else df[col].mean()
+                        next_row[col] = df[col].tail(12).mean() if len(
+                            df) >= 12 else df[col].mean()
                     else:
                         # Daily: use last 30 days
-                        next_row[col] = df[col].tail(30).mean() if len(df) >= 30 else df[col].mean()
+                        next_row[col] = df[col].tail(30).mean() if len(
+                            df) >= 30 else df[col].mean()
+
+    # Ensure critical features are not zero or NaN before prediction
+    for col in critical_features:
+        if col in next_row.columns:
+            val = next_row[col].iloc[0] if hasattr(
+                next_row[col], 'iloc') else next_row[col]
+            if pd.isna(val) or val == 0:
+                # Try to get from recent data
+                if col in df.columns:
+                    recent_val = df[col].tail(24).mean() if len(
+                        df) >= 24 else df[col].mean()
+                    if not pd.isna(recent_val) and recent_val != 0:
+                        next_row[col] = recent_val
 
     X = next_row[features].fillna(method="ffill").fillna(method="bfill")
     pred = model.predict(X)[0]
+
+    # Ensure prediction is not negative (costs can't be negative)
+    if pred < 0:
+        pred = 0.0
 
     return pd.DataFrame(
         {
