@@ -29,12 +29,6 @@ def _read_csv(path: Path) -> pd.DataFrame:
     return pd.read_csv(path) if path.exists() else pd.DataFrame()
 
 
-def _normalize_to_per_household(df: pd.DataFrame, cost_col: str = "Estimated_Hourly_Cost_USD") -> pd.DataFrame:
-    """Convert system-wide costs to per-household costs."""
-    if cost_col in df.columns:
-        df = df.copy()
-        df[cost_col] = df[cost_col] / CA_HOUSEHOLDS
-    return df
 
 
 def _load_hourly_data() -> pd.DataFrame:
@@ -111,13 +105,6 @@ def build():
     else:
         hourly = hourly_features
 
-    # Normalize all costs to per-household
-    hourly = _normalize_to_per_household(hourly)
-    daily = _normalize_to_per_household(daily)
-    monthly = _normalize_to_per_household(monthly)
-    if not preds.empty and "prediction" in preds.columns:
-        preds = preds.copy()
-        preds["prediction"] = preds["prediction"] / CA_HOUSEHOLDS
 
     # Calculate weekly from daily - ensure proper week boundaries and seasonal variation
     weekly = pd.DataFrame()
@@ -258,21 +245,41 @@ def build():
             "<div class='card mb-3'><div class='card-header fw-semibold'>Upcoming Predictions</div><div class='card-body'>"
         )
         preds_display = preds.copy()
-
+        
+        # Ensure feature_date is datetime
+        preds_display["feature_date"] = pd.to_datetime(preds_display["feature_date"])
+        
         def format_prediction(row):
             pred_val = row["prediction"]
-            if row["for"] == "next_hour":
+            if "hour" in str(row["for"]):
                 return f"${pred_val:.4f}"
-            elif row["for"] == "next_day":
+            elif "day" in str(row["for"]):
                 return f"${pred_val:.2f}"
             else:
-                return f"${pred_val:,.0f}"
-        preds_display["prediction"] = preds_display.apply(
-            format_prediction, axis=1)
-        html_parts.append(
-            preds_display.to_html(
-                index=False, classes="table table-sm table-striped mb-0")
-        )
+                return f"${pred_val:,.2f}"
+                
+        preds_display["prediction"] = preds_display.apply(format_prediction, axis=1)
+        
+        # Add the table with a specific ID and custom row attributes for filtering
+        html_parts.append("<div class='table-responsive'>")
+        html_parts.append("<table id='predictions-table' class='table table-sm table-striped mb-0'>")
+        html_parts.append("<thead><tr><th>target</th><th>prediction</th><th>for</th><th>feature_date</th></tr></thead>")
+        html_parts.append("<tbody>")
+        
+        for _, row in preds_display.iterrows():
+            f_date = row["feature_date"].strftime("%Y-%m-%d")
+            # For monthly predictions, also add the month key
+            f_month = row["feature_date"].strftime("%Y-%m")
+            
+            row_class = "prediction-row"
+            html_parts.append(f"<tr class='{row_class}' data-date='{f_date}' data-month='{f_month}'>")
+            html_parts.append(f"<td>{row['target']}</td>")
+            html_parts.append(f"<td>{row['prediction']}</td>")
+            html_parts.append(f"<td>{row['for']}</td>")
+            html_parts.append(f"<td>{row['feature_date']}</td>")
+            html_parts.append("</tr>")
+            
+        html_parts.append("</tbody></table></div>")
         html_parts.append("</div></div>")
 
     # Hourly section
@@ -918,6 +925,52 @@ def build():
   }
   select.addEventListener('change', updateView);
   updateView();
+
+  // Predictions Table Filtering
+  function filterPredictionsTable(selectedDate) {
+    const table = document.getElementById('predictions-table');
+    if (!table) return;
+    
+    const rows = table.querySelectorAll('.prediction-row');
+    const selectedMonth = selectedDate.substring(0, 7); // YYYY-MM
+    
+    rows.forEach(row => {
+      const rowDate = row.getAttribute('data-date');
+      const rowMonth = row.getAttribute('data-month');
+      const rowFor = row.cells[2].innerText.toLowerCase();
+      
+      let show = false;
+      if (rowFor.includes('hour')) {
+        // Show hourly predictions only for the exact selected date
+        show = (rowDate === selectedDate);
+      } else if (rowFor.includes('day')) {
+        // Show daily predictions only for the exact selected date
+        show = (rowDate === selectedDate);
+      } else if (rowFor.includes('month')) {
+        // Show monthly predictions for the selected month
+        show = (rowMonth === selectedMonth);
+      } else {
+        // Fallback or general next_month/next_day labels
+        show = true;
+      }
+      
+      row.style.display = show ? '' : 'none';
+    });
+  }
+
+  // Hook into existing date selectors
+  const hourlyDateSelect = document.getElementById('hourlyDateSelect');
+  const dailyDateSelect = document.getElementById('daily-date-select');
+  
+  if (hourlyDateSelect) {
+    hourlyDateSelect.addEventListener('change', (e) => filterPredictionsTable(e.target.value));
+    // Initial filter if table exists
+    filterPredictionsTable(hourlyDateSelect.value);
+  }
+  
+  if (dailyDateSelect) {
+    dailyDateSelect.addEventListener('change', (e) => filterPredictionsTable(e.target.value));
+  }
 </script>
 """)
 
