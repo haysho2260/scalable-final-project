@@ -121,57 +121,8 @@ def process_hourly_prices():
         out_name = f"CAISO_Price_{year}_{int(month):02d}.csv"
         out_path = os.path.join(target_dir, out_name)
 
-        needs_update = False
-
-        if not os.path.exists(out_path):
-            needs_update = True
-        else:
-            try:
-                # Check Latest Hour in Source vs Target
-                # We only need the last few lines, but reading full file is safer for sorting
-                # Optimization: Read only tail if large, but files are monthly and smallish (<10MB)
-                src_df = pd.read_csv(os.path.join(source_dir, f))
-                tgt_df = pd.read_csv(out_path)
-
-                # Check for Date/HE columns.
-                # "Date" and "HE" (Hour Ending). HE 24 -> next day 00:00 technically, but just sorting by Date, HE works.
-                date_col_src = next(
-                    (c for c in src_df.columns if 'date' in c.lower()), 'Date')
-                date_col_tgt = next(
-                    (c for c in tgt_df.columns if 'date' in c.lower()), 'Date')
-
-                if date_col_src in src_df.columns and date_col_tgt in tgt_df.columns and 'HE' in src_df.columns and 'HE' in tgt_df.columns:
-                    src_df[date_col_src] = pd.to_datetime(
-                        src_df[date_col_src], errors='coerce')
-                    tgt_df[date_col_tgt] = pd.to_datetime(
-                        tgt_df[date_col_tgt], errors='coerce')
-
-                    # Drop NA
-                    src_df = src_df.dropna(subset=[date_col_src, 'HE'])
-                    tgt_df = tgt_df.dropna(subset=[date_col_tgt, 'HE'])
-
-                    if not src_df.empty and not tgt_df.empty:
-                        # Get max timestamp tuple
-                        src_max = src_df.sort_values(
-                            [date_col_src, 'HE']).iloc[-1]
-                        tgt_max = tgt_df.sort_values(
-                            [date_col_tgt, 'HE']).iloc[-1]
-
-                        src_ts = (src_max[date_col_src], src_max['HE'])
-                        tgt_ts = (tgt_max[date_col_tgt], tgt_max['HE'])
-
-                        if src_ts > tgt_ts:
-                            needs_update = True
-                            print(
-                                f"Update needed for {f}: Source latest {src_ts} > Target latest {tgt_ts}")
-                    elif not src_df.empty and tgt_df.empty:
-                        needs_update = True  # Target broken
-                else:
-                    # Columns missing, force update
-                    needs_update = True
-            except Exception as e:
-                print(f"Error checking {f}, forcing update: {e}")
-                needs_update = True
+        # FORCE UPDATE for all files during pipeline conversion
+        needs_update = True
 
         if needs_update:
             files_to_process.append(f)
@@ -217,8 +168,17 @@ def process_hourly_prices():
                     df['Monthly_Price_Cents_per_kWh'] = price
 
                     # Calculate residential household cost (not system-wide)
-                    # Using configurable kWh/hour consumption rate
-                    df['Estimated_Hourly_Cost_USD'] = RESIDENTIAL_KWH_PER_HOUR * (price / 100.0)
+                    # Using configurable kWh/hour consumption rate, shaped by CAISO load
+                    if 'CAISO Total' in df.columns:
+                        # Use system load shape to distribute residential consumption
+                        mean_load = df['CAISO Total'].mean()
+                        if mean_load > 0:
+                            # Cost = (Current Load / Mean Load) * Avg Residential kWh * Price
+                            df['Estimated_Hourly_Cost_USD'] = (df['CAISO Total'] / mean_load) * RESIDENTIAL_KWH_PER_HOUR * (price / 100.0)
+                        else:
+                            df['Estimated_Hourly_Cost_USD'] = RESIDENTIAL_KWH_PER_HOUR * (price / 100.0)
+                    else:
+                        df['Estimated_Hourly_Cost_USD'] = RESIDENTIAL_KWH_PER_HOUR * (price / 100.0)
                 else:
                     print(f"  Warning: No price found for {year}-{month}")
                     df['Monthly_Price_Cents_per_kWh'] = pd.NA

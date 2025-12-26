@@ -18,13 +18,12 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
-from typing import Iterable
-
+from sklearn.ensemble import RandomForestRegressor, HistGradientBoostingRegressor
+from sklearn.metrics import mean_absolute_error, mean_absolute_percentage_error
+from typing import Iterable, Any
 import joblib
 import numpy as np
 import pandas as pd
-from sklearn.ensemble import HistGradientBoostingRegressor
-from sklearn.metrics import mean_absolute_error, mean_absolute_percentage_error
 
 ROOT = Path(__file__).resolve().parents[1]
 FEATURES_DIR = ROOT / "features"
@@ -130,7 +129,8 @@ def build_hourly_dataset() -> pd.DataFrame:
             suffixes=("", "_temp"),
         )
 
-    # Clean and sort
+    # Clean, deduplicate and sort
+    df = df.drop_duplicates(subset=["timestamp"], keep="last")
     df = df.sort_values("timestamp").reset_index(drop=True)
 
     # Save for debugging
@@ -147,7 +147,8 @@ def _train_and_eval(
     target_col: str,
     model_path: Path,
     feature_exclude: Iterable[str],
-) -> tuple[HistGradientBoostingRegressor, dict]:
+    model_type="hgb"  # "hgb" or "rf"
+) -> tuple[Any, dict]:
     data = data.copy()
     y = data[target_col]
 
@@ -161,8 +162,11 @@ def _train_and_eval(
     X_train, X_test = X.iloc[:split_idx], X.iloc[split_idx:]
     y_train, y_test = y.iloc[:split_idx], y.iloc[split_idx:]
 
-    model = HistGradientBoostingRegressor(
-        max_depth=8, max_iter=300, learning_rate=0.05)
+    if model_type == "rf":
+        model = RandomForestRegressor(n_estimators=100, random_state=42)
+    else:
+        model = HistGradientBoostingRegressor(max_depth=8, max_iter=300, learning_rate=0.05)
+    
     model.fit(X_train, y_train)
 
     preds = model.predict(X_test)
@@ -204,6 +208,12 @@ def train_daily_and_monthly():
         .reset_index()
     )
     daily = daily.loc[:, ~daily.columns.duplicated()]
+    outliers = daily[daily[target] > 20]
+    if not outliers.empty:
+        print(f"WARNING: Found {len(outliers)} daily target outliers > 20. Max: {outliers[target].max():.2f}")
+        print(outliers[['date', target]].head())
+    else:
+        print("No daily target outliers > 20 found.")
 
     # Monthly aggregation
     daily["year_month"] = daily["date"].dt.to_period("M")
@@ -227,18 +237,21 @@ def train_daily_and_monthly():
         target_col=target,
         model_path=ROOT / "model" / "hourly_spend_model.pkl",
         feature_exclude=["timestamp", "Date", "HE", "date", "year_month"],
+        model_type="hgb"
     )
     _, daily_metrics = _train_and_eval(
         daily,
         target_col=target,
         model_path=ROOT / "model" / "daily_spend_model.pkl",
         feature_exclude=["date", "year_month"],
+        model_type="rf"
     )
     _, monthly_metrics = _train_and_eval(
         monthly.rename(columns={"year_month_start": "date"}),
         target_col=target,
         model_path=ROOT / "model" / "monthly_spend_model.pkl",
         feature_exclude=["year_month"],
+        model_type="rf"
     )
 
     return {"hourly": hourly_metrics, "daily": daily_metrics, "monthly": monthly_metrics}

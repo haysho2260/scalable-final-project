@@ -289,11 +289,8 @@ def process_lag_features(source_dir):
         "CAISO_Load_") and f.endswith(".csv")]
     target_files = set(os.listdir(target_dir))
 
-    missing_files = [f for f in source_files if f not in target_files]
-
-    if not missing_files:
-        print("All lag feature files already exist. Skipping.")
-        return
+    # FORCE REFRESH: Process all files to fix broken zeros
+    missing_files = source_files
 
     print(
         f"Found {len(missing_files)} missing lag files: {missing_files[:5]}...")
@@ -344,12 +341,17 @@ def process_lag_features(source_dir):
         f_path = os.path.join(source_dir, meta['file'])
         try:
             df = pd.read_csv(f_path)
-            # Handle both 'HE' and 'HR' column names (HR is used in newer files)
+            # Standardize load column immediately
+            if 'CAISO' in df.columns and 'CAISO Total' not in df.columns:
+                df = df.rename(columns={'CAISO': 'CAISO Total'})
+            elif 'PGE' not in df.columns and 'CAISO' not in df.columns and 'CAISO Total' not in df.columns:
+                potential_total = next((c for c in df.columns if 'total' in str(c).lower()), None)
+                if potential_total:
+                    df = df.rename(columns={potential_total: 'CAISO Total'})
+            
+            # Handle both 'HE' and 'HR' column names
             if 'HR' in df.columns and 'HE' not in df.columns:
                 df['HE'] = df['HR']
-            # Ensure Date parsing here to be safe
-            # We assume source files might or might not have lags already if we ran previous version.
-            # But we are re-calculating or calculating fresh.
             df_list.append(df)
         except Exception as e:
             print(f"Error reading {f_path}: {e}")
@@ -377,15 +379,19 @@ def process_lag_features(source_dir):
         elif 'OPR_DT' in full_df.columns:
             date_col = 'OPR_DT'
 
-    if not date_col:
-        print("Could not find Date column.")
-        return
-
     full_df[date_col] = pd.to_datetime(full_df[date_col], errors='coerce')
     full_df = full_df.dropna(subset=[date_col])
     full_df = full_df.sort_values(date_col)
-
     full_df['Daily_Date'] = full_df[date_col].dt.date
+
+    # Standardize load column (safety check)
+    if 'CAISO Total' not in full_df.columns:
+        if 'CAISO' in full_df.columns:
+            full_df = full_df.rename(columns={'CAISO': 'CAISO Total'})
+        else:
+            potential_total = next((c for c in full_df.columns if 'total' in str(c).lower()), None)
+            if potential_total:
+                full_df = full_df.rename(columns={potential_total: 'CAISO Total'})
 
     # 4. Compute Daily Stats
     load_col = 'CAISO Total'
