@@ -9,6 +9,7 @@ Results are written to `results/predictions.csv`.
 """
 
 from __future__ import annotations
+from model.train import build_hourly_dataset
 
 from datetime import timedelta
 from pathlib import Path
@@ -25,7 +26,6 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from model.train import build_hourly_dataset
 
 RESULTS_DIR = ROOT / "results"
 DAILY_MODEL_PATH = ROOT / "model" / "daily_spend_model.pkl"
@@ -122,12 +122,12 @@ def _predict_next(
 
     # Convert date_col to datetime for easier comparison
     df_dates = pd.to_datetime(df[date_col], errors="coerce")
-    
+
     # Find similar historical periods to use as a base
     # For daily: same day of week, same month (from previous years)
     # For monthly: same month from previous years
     similar_rows = pd.DataFrame()
-    
+
     if freq.upper().startswith("M"):
         # Monthly: find same month from previous years
         similar_mask = df_dates.dt.month == next_date.month
@@ -135,23 +135,38 @@ def _predict_next(
     else:
         # Daily: find same day of week and same month from history
         similar_mask = (
-            (df_dates.dt.month == next_date.month) & 
+            (df_dates.dt.month == next_date.month) &
             (df_dates.dt.dayofweek == next_date.dayofweek)
         )
         similar_rows = df[similar_mask]
-    
+
     # Use the most recent similar row, or fall back to last row
     if not similar_rows.empty:
         # Use the most recent similar period (but not the exact same date)
-        base_row = similar_rows.iloc[-1].copy()
+        # Use iloc[[-1]] to ensure we get a DataFrame, not a Series
+        base_row = similar_rows.iloc[[-1]].copy()
     else:
         # Fallback: use last row but we'll update features
         base_row = last_row.copy()
-    
+
+    # Ensure base_row is a DataFrame (not a Series)
+    if isinstance(base_row, pd.Series):
+        base_row = base_row.to_frame().T
+
     # Create next_row starting from base_row
     next_row = base_row.copy()
+
+    # Ensure next_row is a DataFrame
+    if isinstance(next_row, pd.Series):
+        next_row = next_row.to_frame().T
+
     next_row[date_col] = next_date
-    
+
+    # Final safety check: ensure next_row is a DataFrame
+    if not isinstance(next_row, pd.DataFrame):
+        next_row = next_row.to_frame().T if isinstance(
+            next_row, pd.Series) else pd.DataFrame([next_row])
+
     # Update temporal features based on next date
     if "hour" in next_row.columns:
         if freq.upper().startswith("M"):
@@ -159,20 +174,22 @@ def _predict_next(
             if not similar_rows.empty and "hour" in similar_rows.columns:
                 next_row["hour"] = similar_rows["hour"].mean()
             else:
-                next_row["hour"] = df["hour"].mean() if "hour" in df.columns else 12
+                next_row["hour"] = df["hour"].mean(
+                ) if "hour" in df.columns else 12
         else:
             # For daily, use average hour from similar days
             if not similar_rows.empty and "hour" in similar_rows.columns:
                 next_row["hour"] = similar_rows["hour"].mean()
             else:
-                next_row["hour"] = df["hour"].mean() if "hour" in df.columns else 12
-    
+                next_row["hour"] = df["hour"].mean(
+                ) if "hour" in df.columns else 12
+
     if "dayofweek" in next_row.columns:
         next_row["dayofweek"] = next_date.dayofweek
-    
+
     if "month" in next_row.columns:
         next_row["month"] = next_date.month
-    
+
     # Update lag features using recent history
     # Lag features are like "daily_mean_cost_lag_1", "daily_std_cost_lag_1", etc.
     for lag_col in [col for col in features if "_lag_" in col]:
@@ -180,7 +197,7 @@ def _predict_next(
         try:
             # Extract lag number (e.g., "daily_mean_cost_lag_7" -> 7)
             lag_num = int(lag_col.split("_lag_")[1])
-            
+
             if freq.upper().startswith("M"):
                 # Monthly: look back by months (only use lag_1 for monthly)
                 if lag_num == 1:
@@ -201,7 +218,8 @@ def _predict_next(
                     lag_1_col = base_col + "_lag_1"
                     if lag_1_col in df.columns:
                         lag_date = next_date - DateOffset(months=1)
-                        df_dates = pd.to_datetime(df[date_col], errors="coerce")
+                        df_dates = pd.to_datetime(
+                            df[date_col], errors="coerce")
                         lag_rows = df[df_dates <= lag_date]
                         if not lag_rows.empty:
                             base_col_clean = lag_1_col.replace("_lag_1", "")
@@ -221,53 +239,59 @@ def _predict_next(
                         lag_value = lag_rows.iloc[-1][lag_col]
         except (ValueError, KeyError, IndexError):
             pass
-        
+
         if lag_value is not None and not pd.isna(lag_value):
             next_row[lag_col] = lag_value
         else:
             # Fallback: use recent average of the lag column itself
             if lag_col in df.columns:
-                next_row[lag_col] = df[lag_col].tail(30).mean() if len(df) >= 30 else df[lag_col].mean()
+                next_row[lag_col] = df[lag_col].tail(
+                    30).mean() if len(df) >= 30 else df[lag_col].mean()
             else:
                 # If lag column doesn't exist, try to compute from base column
                 try:
                     base_col = lag_col.split("_lag_")[0]
                     if base_col in df.columns:
-                        next_row[lag_col] = df[base_col].tail(30).mean() if len(df) >= 30 else df[base_col].mean()
+                        next_row[lag_col] = df[base_col].tail(
+                            30).mean() if len(df) >= 30 else df[base_col].mean()
                 except:
                     pass
-    
+
     # Use historical values from similar periods (not just averages - use actual values for variation)
     if not similar_rows.empty:
         # Use the most recent similar period's actual values (gives natural variation)
-        # But if we have multiple similar periods, we can sample or use the most recent
-        similar_row_actual = similar_rows.iloc[-1].copy()
-        
+        # Use iloc[[-1]] to ensure we get a DataFrame
+        similar_row_actual = similar_rows.iloc[[-1]].copy()
+
         # Update all features from similar historical periods (except lag features which are handled separately)
         for col in features:
             if "_lag_" not in col and col in similar_row_actual.columns:
                 # Use actual value from similar historical period (not average - this gives variation)
-                next_row[col] = similar_row_actual[col]
-    
+                next_row[col] = similar_row_actual[col].iloc[0]
+
     # For features not yet set or missing, use recent averages
     for col in features:
         if col not in next_row.columns:
             continue
-        col_val = next_row[col].iloc[0] if hasattr(next_row[col], 'iloc') else next_row[col]
+        col_val = next_row[col].iloc[0] if hasattr(
+            next_row[col], 'iloc') else next_row[col]
         if pd.isna(col_val):
             if col in df.columns:
                 if freq.upper().startswith("M"):
                     # Monthly: use average from last 12 months
-                    next_row[col] = df[col].tail(12).mean() if len(df) >= 12 else df[col].mean()
+                    next_row[col] = df[col].tail(12).mean() if len(
+                        df) >= 12 else df[col].mean()
                 else:
                     # Daily: use average from last 30 days
-                    next_row[col] = df[col].tail(30).mean() if len(df) >= 30 else df[col].mean()
-    
+                    next_row[col] = df[col].tail(30).mean() if len(
+                        df) >= 30 else df[col].mean()
+
     # Fill any remaining NaN features with recent averages
     for col in features:
         if col in next_row.columns and pd.isna(next_row[col].iloc[0]):
             if col in df.columns:
-                next_row[col] = df[col].tail(30).mean() if len(df) >= 30 else df[col].mean()
+                next_row[col] = df[col].tail(30).mean() if len(
+                    df) >= 30 else df[col].mean()
 
     X = next_row[features].fillna(method="ffill").fillna(method="bfill")
     pred = model.predict(X)[0]
