@@ -121,41 +121,10 @@ def build():
             .sort_values("week_start")
         )
 
-    # Calculate insights
-    insights = {}
-    if not hourly.empty:
-        # Peak hour of day
-        hourly_avg = hourly.groupby("hour")["Estimated_Hourly_Cost_USD"].mean()
-        insights["peak_hour"] = hourly_avg.idxmax()
-        insights["peak_hour_cost"] = hourly_avg.max()
-        insights["off_peak_hour"] = hourly_avg.idxmin()
-        insights["off_peak_cost"] = hourly_avg.min()
-
-        # Peak day of week
-        daily_avg = hourly.groupby("dayofweek")[
-            "Estimated_Hourly_Cost_USD"].mean()
-        day_names = ["Monday", "Tuesday", "Wednesday",
-                     "Thursday", "Friday", "Saturday", "Sunday"]
-        insights["peak_day"] = day_names[daily_avg.idxmax()]
-        insights["peak_day_cost"] = daily_avg.max() * 24.0 # Scale to daily total
-
-    if not monthly.empty:
-        monthly["year_month_start"] = pd.to_datetime(
-            monthly["year_month_start"])
-        monthly_avg = monthly.groupby(monthly["year_month_start"].dt.month)[
-            "Estimated_Hourly_Cost_USD"].mean()
-        month_names = ["Jan", "Feb", "Mar", "Apr", "May",
-                       "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
-        insights["peak_month"] = month_names[monthly_avg.idxmax() - 1]
-        insights["peak_month_cost"] = monthly_avg.max()
-        insights["avg_monthly"] = monthly["Estimated_Hourly_Cost_USD"].mean()
-        insights["total_yearly"] = monthly.tail(12)["Estimated_Hourly_Cost_USD"].sum() if len(
-            monthly) >= 12 else None
-
     html_parts = [
         "<html>",
         "<head>",
-        "<title>Residential Energy Spending per Household Dashboard</title>",
+        "<title>Residential Energy Spending Predictions Dashboard</title>",
         "<link rel='stylesheet' href='https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css'>",
         "<script src='https://cdn.plot.ly/plotly-latest.min.js'></script>",
         "<style>",
@@ -166,9 +135,6 @@ def build():
         ".sidebar .form-label { font-size: 0.8rem; color: #d1d5db; margin-bottom: 0.5rem; }",
         ".sidebar .form-select { background-color: #343a40; border-color: #495057; color: #e5e7eb; }",
         ".sidebar .form-select:focus { background-color: #343a40; border-color: #6c757d; color: #e5e7eb; }",
-        ".insight-card { border-left: 4px solid #3b82f6; }",
-        ".insight-value { font-size: 1.5rem; font-weight: 600; color: #3b82f6; }",
-        "table { font-size: 0.8rem; }",
         ".stat-card { background: white; border-radius: 8px; padding: 1rem; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }",
         ".sidebar.hidden { transform: translateX(-250px); }",
         ".hamburger-btn { background: none; border: none; color: white; font-size: 1.5rem; padding: 0.5rem; cursor: pointer; margin-right: 0.5rem; }",
@@ -185,13 +151,13 @@ def build():
         "<body>",
         "<nav class='navbar navbar-dark bg-dark px-3'>",
         "<button class='hamburger-btn' id='sidebar-toggle' aria-label='Toggle menu'>☰</button>",
-        "<span class='navbar-brand ms-2'>Residential Energy Spending per Household</span>",
+        "<span class='navbar-brand ms-2'>Residential Energy Spending Predictions</span>",
         "</nav>",
         "<div class='sidebar-overlay' id='sidebar-overlay'></div>",
         "<div class='container-fluid'>",
         "<div class='row'>",
         "<aside class='col-md-3 col-lg-2 sidebar' id='sidebar'>",
-        "<h6>Time Period</h6>",
+        "<h6>Prediction Period</h6>",
         "<div class='mb-3'>",
         "<label for='granularity' class='form-label'>View</label>",
         "<select id='granularity' class='form-select form-select-sm'>"
@@ -199,49 +165,13 @@ def build():
         "<option value='daily'>Daily</option>"
         "<option value='weekly'>Weekly</option>"
         "<option value='monthly' selected>Monthly</option>"
-        "<option value='yearly'>Yearly</option>"
         "</select>",
         "</div>",
         "</aside>",
         "<main class='col-md-9 col-lg-10 py-3'>",
     ]
 
-    # Summary stats cards
-    if insights:
-        html_parts.append("<div class='row mb-4'>")
-        if "avg_monthly" in insights:
-            html_parts.append(
-                f"<div class='col-md-3 mb-3'><div class='stat-card'>"
-                f"<div class='text-muted small'>Avg Monthly (per Household)</div>"
-                f"<div class='insight-value'>${insights['avg_monthly']:.2f}</div>"
-                f"</div></div>"
-            )
-        if "total_yearly" in insights and insights["total_yearly"]:
-            html_parts.append(
-                f"<div class='col-md-3 mb-3'><div class='stat-card'>"
-                f"<div class='text-muted small'>Total Yearly (per Household)</div>"
-                f"<div class='insight-value'>${insights['total_yearly']:.2f}</div>"
-                f"</div></div>"
-            )
-        if "peak_hour" in insights:
-            html_parts.append(
-                f"<div class='col-md-3 mb-3'><div class='stat-card'>"
-                f"<div class='text-muted small'>Peak Hour</div>"
-                f"<div class='insight-value'>{insights['peak_hour']}:00</div>"
-                f"<div class='small text-muted'>${insights['peak_hour_cost']:.4f}/hr per household</div>"
-                f"</div></div>"
-            )
-        if "peak_month" in insights:
-            html_parts.append(
-                f"<div class='col-md-3 mb-3'><div class='stat-card'>"
-                f"<div class='text-muted small'>Peak Month</div>"
-                f"<div class='insight-value'>{insights['peak_month']}</div>"
-                f"<div class='small text-muted'>${insights['peak_month_cost']:.2f} per household</div>"
-                f"</div></div>"
-            )
-        html_parts.append("</div>")
-
-    # Predictions
+    # Upcoming Predictions Section (Core)
     if not preds.empty:
         html_parts.append(
             "<div class='card mb-3'><div class='card-header fw-semibold'>Upcoming Predictions</div><div class='card-body'>"
@@ -310,7 +240,7 @@ function updatePredictionsChart(granularity) {{
         xaxis: {{ title: 'Time' }},
         yaxis: {{ title: 'Predicted Cost (USD)' }},
         margin: {{ t: 40, b: 40, l: 60, r: 20 }},
-        height: 350
+        height: 450
     }};
     
     Plotly.newPlot(container, [trace], layout, {{responsive: true}});
@@ -321,615 +251,22 @@ function updatePredictionsChart(granularity) {{
         # Add the table with a specific ID and custom row attributes for filtering
         html_parts.append("<div class='table-responsive'>")
         html_parts.append("<table id='predictions-table' class='table table-sm table-striped mb-0'>")
-        html_parts.append("<thead><tr><th>target</th><th>prediction</th><th>for</th><th>feature_date</th></tr></thead>")
+        html_parts.append("<thead><tr><th>Prediction</th><th>Time</th></tr></thead>")
         html_parts.append("<tbody>")
         
         for _, row in preds_display.iterrows():
             f_date = row["feature_date"].strftime("%Y-%m-%d")
             f_month = row["feature_date"].strftime("%Y-%m")
+            f_for = str(row["for"])
             
             row_class = "prediction-row"
-            html_parts.append(f"<tr class='{row_class}' data-date='{f_date}' data-month='{f_month}'>")
-            html_parts.append(f"<td>{row['target']}</td>")
+            html_parts.append(f"<tr class='{row_class}' data-date='{f_date}' data-month='{f_month}' data-for='{f_for}'>")
             html_parts.append(f"<td>{row['prediction_text']}</td>")
-            html_parts.append(f"<td>{row['for']}</td>")
             html_parts.append(f"<td>{row['feature_date']}</td>")
             html_parts.append("</tr>")
             
         html_parts.append("</tbody></table></div>")
         html_parts.append("</div></div>")
-
-    # Hourly section
-    html_parts.append("<div id='hourly-section' style='display:none;'>")
-    if not hourly.empty:
-        # Hour of day heatmap
-        try:
-            hourly_pivot = hourly.groupby(["Date", "hour"])[
-                "Estimated_Hourly_Cost_USD"].mean().reset_index()
-            hourly_pivot = hourly_pivot.pivot_table(
-                index="Date", columns="hour", values="Estimated_Hourly_Cost_USD", aggfunc="mean")
-
-            if not hourly_pivot.empty:
-                fig_hourly = go.Figure(data=go.Heatmap(
-                    z=hourly_pivot.values,
-                    x=hourly_pivot.columns.tolist(),
-                    y=[str(d.date()) for d in hourly_pivot.index],
-                    colorscale="Viridis",
-                    colorbar=dict(title="Cost per Household (USD)")
-                ))
-                fig_hourly.update_layout(
-                    title="Hourly Residential Spending per Household (Cost per Hour)",
-                    xaxis_title="Hour of Day",
-                    yaxis_title="Date",
-                    height=600,
-                    xaxis=dict(dtick=1)
-                )
-                html_parts.append(
-                    "<div class='card mb-3'><div class='card-header fw-semibold'>Hourly Spending Pattern (per Household)</div><div class='card-body'>"
-                )
-                html_parts.append(fig_hourly.to_html(
-                    full_html=False, include_plotlyjs=False))
-                html_parts.append("</div></div>")
-        except Exception:
-            pass  # Skip heatmap if pivot fails
-
-        # Average Cost by Hour - with date selector
-        # Get available dates
-        if "Date" in hourly.columns:
-            hourly["Date"] = pd.to_datetime(hourly["Date"], errors="coerce")
-            available_dates = sorted(
-                hourly["Date"].dt.date.unique(), reverse=True)
-        elif "timestamp" in hourly.columns:
-            available_dates = sorted(
-                hourly["timestamp"].dt.date.unique(), reverse=True)
-        else:
-            available_dates = []
-
-        default_date = available_dates[0] if len(available_dates) > 0 else None
-
-        html_parts.append(
-            "<div class='card mb-3'><div class='card-header fw-semibold'>Average Cost by Hour</div><div class='card-body'>"
-        )
-
-        if default_date:
-            # Calendar date picker with disabled dates
-            # Convert available dates to strings for JSON serialization
-            available_dates_str = [str(d) for d in available_dates]
-            available_dates_js = json.dumps(available_dates_str)
-            html_parts.append(
-                f"<div class='mb-3 d-flex gap-3 align-items-center flex-wrap'>"
-                f"<label for='hourlyDateSelect' class='form-label mb-0'><strong>Select Date:</strong></label>"
-                f"<input type='date' id='hourlyDateSelect' class='form-control' style='width: auto; min-width: 200px;' value='{default_date}'>"
-            )
-
-            html_parts.append(
-                f"<label for='hourlyTimeFormat' class='form-label mb-0'><strong>Time Format:</strong></label>"
-                f"<select id='hourlyTimeFormat' class='form-select' style='width: auto; min-width: 150px;'>"
-                f"<option value='24'>24-Hour (00:00)</option>"
-                f"<option value='12'>12-Hour (12:00 AM)</option>"
-                f"</select>"
-                f"</div>"
-            )
-
-            # Add flatpickr calendar library for better date selection with disabled dates
-            html_parts.append("""
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
-<script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
-""")
-
-            # Add JavaScript to initialize calendar with disabled dates
-            html_parts.append(f"""
-<script>
-(function() {{
-    const availableDates = {available_dates_js};
-    const dateInput = document.getElementById('hourlyDateSelect');
-    
-    // Convert available dates to Date objects for flatpickr
-    const enabledDates = availableDates.map(d => new Date(d + 'T00:00:00'));
-    
-    // Initialize flatpickr with disabled dates
-    flatpickr(dateInput, {{
-        dateFormat: 'Y-m-d',
-        defaultDate: '{default_date}',
-        enable: enabledDates,
-        disable: [
-            function(date) {{
-                // Disable all dates not in availableDates
-                const dateStr = date.toISOString().split('T')[0];
-                return !availableDates.includes(dateStr);
-            }}
-        ],
-        onReady: function(selectedDates, dateStr, instance) {{
-            // Style disabled dates
-            instance.calendarContainer.querySelectorAll('.flatpickr-day').forEach(day => {{
-                if (day.classList.contains('flatpickr-disabled')) {{
-                    day.style.opacity = '0.3';
-                    day.style.cursor = 'not-allowed';
-                }}
-            }});
-        }}
-    }});
-}})();
-</script>
-""")
-
-            # Prepare hourly data for JavaScript
-            hourly_data_list = []
-            date_col = "Date" if "Date" in hourly.columns else "timestamp"
-            for _, row in hourly.iterrows():
-                try:
-                    date_val = row[date_col]
-                    if pd.isna(date_val):
-                        continue
-                    if hasattr(date_val, 'date'):
-                        date_str = str(date_val.date())
-                    else:
-                        date_str = str(date_val)
-                    hour_val = int(row["hour"]) if not pd.isna(
-                        row["hour"]) else 0
-                    # Ensure hour is in valid range 0-23
-                    hour_val = max(0, min(23, hour_val))
-                    hourly_data_list.append({
-                        "date": date_str,
-                        "hour": hour_val,
-                        "cost": float(row["Estimated_Hourly_Cost_USD"]) if not pd.isna(row["Estimated_Hourly_Cost_USD"]) else 0.0
-                    })
-                except Exception:
-                    continue
-
-            hourly_data_json = json.dumps(hourly_data_list)
-
-            # Generate initial chart for default date
-            selected_data = hourly[hourly[date_col].dt.date ==
-                                   default_date] if date_col in hourly.columns else pd.DataFrame()
-            if not selected_data.empty:
-                selected_data = selected_data.sort_values("hour")
-                # Format hours for 24-hour display
-                hour_labels_24 = [
-                    f"{int(h):02d}:00" for h in selected_data["hour"]]
-
-                fig_hour_avg = go.Figure()
-                fig_hour_avg.add_trace(go.Scatter(
-                    x=selected_data["hour"],
-                    y=selected_data["Estimated_Hourly_Cost_USD"],
-                    mode='lines+markers',
-                    name='Cost per Hour',
-                    hovertemplate='<b>%{text}</b><br>Cost: $%{y:.4f}<extra></extra>',
-                    text=hour_labels_24
-                ))
-                fig_hour_avg.update_layout(
-                    title=f"Hourly Residential Cost per Household - {default_date}",
-                    xaxis_title="Hour of Day",
-                    yaxis_title="Cost per Household (USD)",
-                    xaxis=dict(
-                        tickmode='array',
-                        tickvals=selected_data["hour"].tolist(),
-                        ticktext=hour_labels_24,
-                        dtick=1
-                    ),
-                    height=500
-                )
-                html_parts.append(fig_hour_avg.to_html(
-                    full_html=False, include_plotlyjs=False, div_id="hourlyChartContainer"))
-
-            # JavaScript to handle date selection and time format toggle
-            html_parts.append(f"""
-            <script>
-            (function() {{
-                const dateSelect = document.getElementById('hourlyDateSelect'); // Now a date input with flatpickr
-                const timeFormatSelect = document.getElementById('hourlyTimeFormat');
-                const chartContainer = document.getElementById('hourlyChartContainer');
-                const hourlyData = {hourly_data_json};
-                
-                function formatHour24(hour) {{
-                    return String(Math.floor(hour)).padStart(2, '0') + ':00';
-                }}
-                
-                function formatHour12(hour) {{
-                    const h = Math.floor(hour);
-                    const period = h >= 12 ? 'PM' : 'AM';
-                    const displayHour = h === 0 ? 12 : (h > 12 ? h - 12 : h);
-                    return displayHour + ':00 ' + period;
-                }}
-                
-                function updateHourlyChart() {{
-                    const selectedDate = dateSelect.value;
-                    const timeFormat = timeFormatSelect.value;
-                    const is24Hour = timeFormat === '24';
-                    
-                    // Filter data for selected date
-                    const filtered = hourlyData.filter(d => d.date === selectedDate);
-                    filtered.sort((a, b) => a.hour - b.hour);
-                    
-                    if (filtered.length === 0) {{
-                        chartContainer.innerHTML = '<p class="text-muted">No data available for this date.</p>';
-                        return;
-                    }}
-                    
-                    const hours = filtered.map(d => d.hour);
-                    const costs = filtered.map(d => d.cost);
-                    const hourLabels = hours.map(h => is24Hour ? formatHour24(h) : formatHour12(h));
-                    
-                    const trace = {{
-                        x: hours,
-                        y: costs,
-                        mode: 'lines+markers',
-                        type: 'scatter',
-                        name: 'Cost per Hour',
-                        hovertemplate: '<b>%{{text}}</b><br>Cost: $%{{y:.4f}}<extra></extra>',
-                        text: hourLabels
-                    }};
-                    
-                    const layout = {{
-                        title: `Hourly Residential Cost per Household - ${{selectedDate}}`,
-                        xaxis: {{
-                            title: 'Hour of Day',
-                            tickmode: 'array',
-                            tickvals: hours,
-                            ticktext: hourLabels,
-                            dtick: 1
-                        }},
-                        yaxis: {{ title: 'Cost per Household (USD)' }},
-                        height: 500
-                    }};
-                    
-                    Plotly.newPlot('hourlyChartContainer', [trace], layout, {{responsive: true}});
-                }}
-                
-                dateSelect.addEventListener('change', updateHourlyChart);
-                timeFormatSelect.addEventListener('change', updateHourlyChart);
-            }})();
-            </script>
-            """)
-        else:
-            html_parts.append(
-                "<p class='text-muted'>No hourly data available.</p>")
-
-        html_parts.append("</div></div>")
-
-        # Insights
-        if "peak_hour" in insights:
-            html_parts.append(
-                f"<div class='card mb-3 insight-card'><div class='card-body'>"
-                f"<h6 class='text-primary'>💡 Focus Area: Peak Hours</h6>"
-                f"<p>Peak spending per household occurs at <strong>{insights['peak_hour']}:00</strong> "
-                f"(${insights['peak_hour_cost']:.4f}/hr) vs off-peak at <strong>{insights['off_peak_hour']}:00</strong> "
-                f"(${insights['off_peak_cost']:.4f}/hr).</p>"
-                f"<p class='mb-0'><strong>Action:</strong> Shift high-energy activities (laundry, charging) to off-peak hours to save up to ${(insights['peak_hour_cost'] - insights['off_peak_cost']) * 24 * 30:,.2f}/month per household.</p>"
-                f"</div></div>"
-            )
-    else:
-        html_parts.append(
-            "<p class='text-muted'>No hourly data available.</p>")
-    html_parts.append("</div>")
-
-    # Daily section - show average hourly cost for a selected day
-    html_parts.append("<div id='daily-section' style='display:none;'>")
-    if not daily.empty and "Estimated_Hourly_Cost_USD" in daily:
-        daily["date"] = pd.to_datetime(daily["date"])
-
-        # Calculate average hourly cost per day (daily total / 24 hours)
-        daily["avg_hourly_cost"] = daily["Estimated_Hourly_Cost_USD"] / 24.0
-
-        available_dates = sorted(daily["date"].dt.date.unique(), reverse=True)
-        default_date = available_dates[0] if len(available_dates) > 0 else None
-
-        if default_date:
-            default_avg = daily[daily["date"].dt.date ==
-                                default_date]["avg_hourly_cost"].iloc[0]
-
-            # Create a bar chart showing average hourly cost for the selected day
-            fig_daily = go.Figure(data=[
-                go.Bar(x=[str(default_date)], y=[default_avg],
-                       marker_color='#3b82f6', text=[f"${default_avg:.4f}/hr"],
-                       textposition='outside')
-            ])
-            fig_daily.update_layout(
-                title=f"Average Hourly Cost per Household - {default_date}",
-                xaxis_title="Date",
-                yaxis_title="Average Cost per Hour (USD)",
-                height=400,
-                showlegend=False
-            )
-
-            html_parts.append(
-                "<div class='card mb-3'><div class='card-header fw-semibold'>Daily Average Hourly Cost</div><div class='card-body'>"
-            )
-            # Calendar date picker for daily view
-            # Convert available dates to strings for JSON serialization
-            daily_available_dates_str = [str(d) for d in available_dates]
-            daily_available_dates_js = json.dumps(daily_available_dates_str)
-            html_parts.append(
-                f"<div class='mb-3'><label for='daily-date-select' class='form-label'>Select Date:</label>"
-                f"<input type='date' id='daily-date-select' class='form-control form-control-sm' style='max-width: 200px;' value='{default_date}'></div>"
-            )
-
-            # Add JavaScript to initialize calendar for daily view
-            html_parts.append(f"""
-<script>
-(function() {{
-    const dailyAvailableDates = {daily_available_dates_js};
-    const dailyDateInput = document.getElementById('daily-date-select');
-    
-    // Convert available dates to Date objects for flatpickr
-    const dailyEnabledDates = dailyAvailableDates.map(d => new Date(d + 'T00:00:00'));
-    
-    // Initialize flatpickr with disabled dates
-    flatpickr(dailyDateInput, {{
-        dateFormat: 'Y-m-d',
-        defaultDate: '{default_date}',
-        enable: dailyEnabledDates,
-        disable: [
-            function(date) {{
-                // Disable all dates not in availableDates
-                const dateStr = date.toISOString().split('T')[0];
-                return !dailyAvailableDates.includes(dateStr);
-            }}
-        ],
-        onReady: function(selectedDates, dateStr, instance) {{
-            // Style disabled dates
-            instance.calendarContainer.querySelectorAll('.flatpickr-day').forEach(day => {{
-                if (day.classList.contains('flatpickr-disabled')) {{
-                    day.style.opacity = '0.3';
-                    day.style.cursor = 'not-allowed';
-                }}
-            }});
-        }}
-    }});
-}})();
-</script>
-""")
-            html_parts.append("<div id='daily-chart-container'>")
-            html_parts.append(fig_daily.to_html(
-                full_html=False, include_plotlyjs=False))
-            html_parts.append("</div></div></div>")
-
-            # Prepare data for JavaScript
-            daily_avg_json = {}
-            for date in available_dates:
-                avg_cost = daily[daily["date"].dt.date ==
-                                 date]["avg_hourly_cost"].iloc[0]
-                daily_avg_json[str(date)] = float(avg_cost)
-
-            # Add JavaScript to update chart when date changes
-            html_parts.append(f"""
-            <script>
-            const dailyAvgData = {json.dumps(daily_avg_json)};
-            const dateSelect = document.getElementById('daily-date-select');
-            const chartContainer = document.getElementById('daily-chart-container');
-            
-            dateSelect.addEventListener('change', function() {{
-                const selectedDate = dateSelect.value;
-                const avgCost = dailyAvgData[selectedDate];
-                
-                if (avgCost === undefined) {{
-                    chartContainer.innerHTML = '<p>No data available for this date.</p>';
-                    return;
-                }}
-                
-                const trace = {{
-                    x: [selectedDate],
-                    y: [avgCost],
-                    type: 'bar',
-                    marker: {{ color: '#3b82f6' }},
-                    text: [`$${{avgCost.toFixed(4)}}/hr`],
-                    textposition: 'outside'
-                }};
-                
-                const layout = {{
-                    title: `Average Hourly Cost per Household - ${{selectedDate}}`,
-                    xaxis: {{ title: 'Date' }},
-                    yaxis: {{ title: 'Average Cost per Hour (USD)' }},
-                    height: 400,
-                    showlegend: false
-                }};
-                
-                Plotly.newPlot(chartContainer, [trace], layout, {{responsive: true}});
-            }});
-            </script>
-            """)
-        else:
-            html_parts.append(
-                "<p class='text-muted'>No daily data available.</p>")
-    else:
-        html_parts.append("<p class='text-muted'>No daily data available.</p>")
-
-    # Average by day of week (show if we have daily data)
-    if not daily.empty and "Estimated_Hourly_Cost_USD" in daily:
-        daily["date"] = pd.to_datetime(daily["date"])
-        daily["day_name"] = daily["date"].dt.day_name()
-        daily_avg = daily.groupby("day_name")[
-            "Estimated_Hourly_Cost_USD"].mean().reset_index()
-        day_order = ["Monday", "Tuesday", "Wednesday",
-                     "Thursday", "Friday", "Saturday", "Sunday"]
-        daily_avg["day_name"] = pd.Categorical(
-            daily_avg["day_name"], categories=day_order, ordered=True)
-        daily_avg = daily_avg.sort_values("day_name")
-        fig_day_avg = px.line(
-            daily_avg, x="day_name", y="Estimated_Hourly_Cost_USD",
-            title="Average Residential Cost per Household by Day of Week",
-            labels={"day_name": "Day",
-                    "Estimated_Hourly_Cost_USD": "Cost per Household per Day (USD)"},
-            markers=True
-        )
-        html_parts.append(
-            "<div class='card mb-3'><div class='card-header fw-semibold'>Average Cost by Day of Week</div><div class='card-body'>"
-        )
-        html_parts.append(fig_day_avg.to_html(
-            full_html=False, include_plotlyjs=False))
-        html_parts.append("</div></div>")
-
-        # Insights for daily
-        if "peak_day" in insights:
-            html_parts.append(
-                f"<div class='card mb-3 insight-card'><div class='card-body'>"
-                f"<h6 class='text-primary'>💡 Focus Area: Peak Days</h6>"
-                f"<p>Peak spending per household occurs on <strong>{insights['peak_day']}s</strong> "
-                f"(${insights['peak_day_cost']:.2f}/day).</p>"
-                f"<p class='mb-0'><strong>Action:</strong> Schedule energy-intensive activities on lower-cost days when possible.</p>"
-                f"</div></div>"
-            )
-    html_parts.append("</div>")
-
-    # Weekly section
-    html_parts.append("<div id='weekly-section' style='display:none;'>")
-    if not weekly.empty:
-        fig_weekly = px.line(
-            weekly.sort_values("week_start"), x="week_start", y="Estimated_Hourly_Cost_USD",
-            title="Weekly Residential Spending per Household",
-            labels={"week_start": "Week Starting",
-                    "Estimated_Hourly_Cost_USD": "Cost per Household per Week (USD)"},
-            markers=True
-        )
-        html_parts.append(
-            "<div class='card mb-3'><div class='card-header fw-semibold'>Weekly Spending</div><div class='card-body'>"
-        )
-        html_parts.append(fig_weekly.to_html(
-            full_html=False, include_plotlyjs=False))
-        html_parts.append("</div></div>")
-
-        html_parts.append(
-            "<div class='card mb-3'><div class='card-header fw-semibold'>Weekly Spending (all available)</div><div class='card-body table-responsive'>"
-        )
-        weekly_display = weekly[["week_start",
-                                 "Estimated_Hourly_Cost_USD"]].copy()
-        weekly_display.columns = ["Week Starting",
-                                  "Total Cost per Household (USD)"]
-        weekly_display["Total Cost per Household (USD)"] = weekly_display["Total Cost per Household (USD)"].apply(
-            lambda x: f"${x:.2f}")
-        html_parts.append(
-            weekly_display.sort_values("Week Starting", ascending=False).to_html(
-                index=False, classes="table table-sm table-striped table-hover mb-0"
-            )
-        )
-        html_parts.append("</div></div>")
-    else:
-        html_parts.append(
-            "<p class='text-muted'>No weekly data available.</p>")
-    html_parts.append("</div>")
-
-    # Monthly section
-    html_parts.append("<div id='monthly-section' style='display:block;'>")
-    if not monthly.empty and "Estimated_Hourly_Cost_USD" in monthly:
-        monthly["year_month_start"] = pd.to_datetime(
-            monthly["year_month_start"])
-        fig_month = px.line(
-            monthly.sort_values("year_month_start"), x="year_month_start", y="Estimated_Hourly_Cost_USD",
-            title="Monthly Residential Spending per Household",
-            labels={"year_month_start": "Month",
-                    "Estimated_Hourly_Cost_USD": "Cost per Household per Month (USD)"},
-            markers=True
-        )
-        fig_month.update_xaxes(rangeslider_visible=True)
-        html_parts.append(
-            "<div class='card mb-3'><div class='card-header fw-semibold'>Monthly Spending</div><div class='card-body'>"
-        )
-        html_parts.append(fig_month.to_html(
-            full_html=False, include_plotlyjs=False))
-        html_parts.append("</div></div>")
-
-        # Average by month
-        monthly["month_name"] = monthly["year_month_start"].dt.strftime("%B")
-        monthly_avg = monthly.groupby("month_name")[
-            "Estimated_Hourly_Cost_USD"].mean().reset_index()
-        month_order = ["January", "February", "March", "April", "May", "June",
-                       "July", "August", "September", "October", "November", "December"]
-        monthly_avg["month_name"] = pd.Categorical(
-            monthly_avg["month_name"], categories=month_order, ordered=True)
-        monthly_avg = monthly_avg.sort_values("month_name")
-        fig_month_avg = px.line(
-            monthly_avg, x="month_name", y="Estimated_Hourly_Cost_USD",
-            title="Average Residential Cost per Household by Month",
-            labels={"month_name": "Month",
-                    "Estimated_Hourly_Cost_USD": "Cost per Household per Month (USD)"},
-            markers=True
-        )
-        html_parts.append(
-            "<div class='card mb-3'><div class='card-header fw-semibold'>Average Cost by Month</div><div class='card-body'>"
-        )
-        html_parts.append(fig_month_avg.to_html(
-            full_html=False, include_plotlyjs=False))
-        html_parts.append("</div></div>")
-
-        # Insights
-        if "peak_month" in insights:
-            html_parts.append(
-                f"<div class='card mb-3 insight-card'><div class='card-body'>"
-                f"<h6 class='text-primary'>💡 Focus Area: Peak Months</h6>"
-                f"<p>Peak spending per household occurs in <strong>{insights['peak_month']}</strong> "
-                f"(${insights['peak_month_cost']:.2f}/month).</p>"
-                f"<p class='mb-0'><strong>Action:</strong> Plan major energy-intensive activities (HVAC maintenance, insulation upgrades) before peak months to reduce costs.</p>"
-                f"</div></div>"
-            )
-    else:
-        html_parts.append(
-            "<p class='text-muted'>No monthly data available.</p>")
-    html_parts.append("</div>")
-
-    # Yearly section
-    html_parts.append("<div id='yearly-section' style='display:none;'>")
-    if not monthly.empty and "Estimated_Hourly_Cost_USD" in monthly:
-        monthly["year_month_start"] = pd.to_datetime(
-            monthly["year_month_start"])
-        monthly["year"] = monthly["year_month_start"].dt.year
-        monthly["month"] = monthly["year_month_start"].dt.month
-
-        month_counts = monthly.groupby("year")["month"].agg(
-            ["count", "min", "max"]).reset_index()
-        month_counts.columns = [
-            "year", "month_count", "min_month", "max_month"]
-
-        yearly = (
-            monthly.groupby("year")
-            .agg({"Estimated_Hourly_Cost_USD": "sum", "CAISO Total": "mean", "Monthly_Price_Cents_per_kWh": "mean"})
-            .reset_index()
-        )
-        yearly = yearly.merge(month_counts, on="year")
-
-        def make_year_label(row):
-            if row["month_count"] == 12:
-                return str(int(row["year"]))
-            else:
-                month_names = ["Jan", "Feb", "Mar", "Apr", "May",
-                               "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
-                min_name = month_names[int(row["min_month"]) - 1]
-                max_name = month_names[int(row["max_month"]) - 1]
-                return f"{int(row['year'])} ({min_name}-{max_name})"
-
-        yearly["year_label"] = yearly.apply(make_year_label, axis=1)
-        yearly = yearly[yearly["month_count"] >= 6].copy()
-
-        fig_year = px.line(
-            yearly, x="year_label", y="Estimated_Hourly_Cost_USD",
-            title="Yearly Residential Spending per Household",
-            labels={"year_label": "Year",
-                    "Estimated_Hourly_Cost_USD": "Cost per Household per Year (USD)"},
-            markers=True
-        )
-        html_parts.append(
-            "<div class='card mb-3'><div class='card-header fw-semibold'>Yearly Spending</div><div class='card-body'>"
-        )
-        html_parts.append(fig_year.to_html(
-            full_html=False, include_plotlyjs=False))
-        html_parts.append("</div></div>")
-
-        yearly_sorted = yearly.sort_values("year", ascending=False)
-        display_yearly = yearly_sorted[[
-            "year_label", "Estimated_Hourly_Cost_USD", "Monthly_Price_Cents_per_kWh", "month_count"]].copy()
-        display_yearly.columns = [
-            "Year", "Total Cost per Household (USD)", "Avg Price (cents/kWh)", "Months"]
-        display_yearly["Total Cost per Household (USD)"] = display_yearly["Total Cost per Household (USD)"].apply(
-            lambda x: f"${x:,.0f}")
-        html_parts.append(
-            "<div class='card mb-3'><div class='card-header fw-semibold'>Yearly Summary</div><div class='card-body table-responsive'>"
-        )
-        html_parts.append(display_yearly.to_html(
-            index=False, classes="table table-sm table-striped table-hover mb-0"))
-        html_parts.append("</div></div>")
-    else:
-        html_parts.append(
-            "<p class='text-muted'>No yearly data available.</p>")
-    html_parts.append("</div>")
 
     # JavaScript for toggling
     html_parts.append("""
@@ -975,59 +312,16 @@ function updatePredictionsChart(granularity) {{
   
   // Time period view toggling
   const select = document.getElementById('granularity');
-  const sections = {
-    hourly: document.getElementById('hourly-section'),
-    daily: document.getElementById('daily-section'),
-    weekly: document.getElementById('weekly-section'),
-    monthly: document.getElementById('monthly-section'),
-    yearly: document.getElementById('yearly-section'),
-  };
   
-  function updateView() {
-    const val = select.value;
-    for (const key in sections) {
-      if (sections[key]) {
-        sections[key].style.display = key === val ? 'block' : 'none';
-      }
-    }
-    // Filter predictions table to match the selected view
-    runFilter();
-  }
-  select.addEventListener('change', updateView);
-
-  // Predictions Table Filtering
-  function filterPredictionsTable(granularity, selectedDate) {
-    const table = document.getElementById('predictions-table');
-    if (!table) return;
-    
-    const rows = table.querySelectorAll('.prediction-row');
-    const selectedMonth = selectedDate ? selectedDate.substring(0, 7) : null;
-    
+  function updateTableFiltering(granularity) {
+    const rows = document.querySelectorAll('.prediction-row');
     rows.forEach(row => {
-      const rowDate = row.getAttribute('data-date');
-      const rowMonth = row.getAttribute('data-month');
-      const rowFor = row.cells[2].innerText.toLowerCase();
-      
+      const type = row.getAttribute('data-for') || "";
       let show = false;
-      
-      if (granularity === 'hourly' && rowFor.includes('hour')) {
-        // If we have a matching date, filter strictly. Otherwise show all hourly.
-        show = !selectedDate || (rowDate === selectedDate);
-        if (!show && !selectedDate) show = true; 
-        // Logic: if granularity matches type, show it. 
-        // We only hide if a specific date is picked AND it doesn't match.
-        // But since predictions are FUTURE and selector is HISTORICAL, they rarely match.
-        // So let's show all for the granularity by default.
-        show = true; 
-      } else if (granularity === 'daily' && rowFor.includes('day')) {
-        show = true;
-      } else if (granularity === 'monthly' && rowFor.includes('month')) {
-        show = true;
-      } else if (granularity === 'weekly' && rowFor.includes('week')) {
-        show = true;
-      } else if (granularity === 'yearly' && rowFor.includes('year')) {
-        show = true;
-      }
+      if (granularity === 'hourly' && type.includes('hour')) show = true;
+      else if (granularity === 'daily' && type.includes('day')) show = true;
+      else if (granularity === 'weekly' && type.includes('week')) show = true;
+      else if (granularity === 'monthly' && type.includes('month')) show = true;
       
       row.style.display = show ? '' : 'none';
     });
@@ -1035,29 +329,14 @@ function updatePredictionsChart(granularity) {{
 
   function runFilter() {
     const granularity = select.value;
-    let date = "";
-    if (granularity === 'hourly') {
-      date = document.getElementById('hourlyDateSelect')?.value || "";
-    } else if (granularity === 'daily') {
-      date = document.getElementById('daily-date-select')?.value || "";
-    }
-    filterPredictionsTable(granularity, date);
+    updateTableFiltering(granularity);
     updatePredictionsChart(granularity);
   }
 
-  // Hook into existing date selectors
-  const hourlyDateSelect = document.getElementById('hourlyDateSelect');
-  const dailyDateSelect = document.getElementById('daily-date-select');
-  
-  if (hourlyDateSelect) {
-    hourlyDateSelect.addEventListener('change', runFilter);
-  }
-  if (dailyDateSelect) {
-    dailyDateSelect.addEventListener('change', runFilter);
-  }
+  select.addEventListener('change', runFilter);
 
   // Initial update
-  updateView();
+  runFilter();
 </script>
 """)
 
