@@ -212,9 +212,6 @@ def train_daily_and_monthly():
     if not outliers.empty:
         print(f"WARNING: Found {len(outliers)} daily target outliers > 20. Max: {outliers[target].max():.2f}")
         print(outliers[['date', target]].head())
-    else:
-        print("No daily target outliers > 20 found.")
-
     # Monthly aggregation
     daily["year_month"] = daily["date"].dt.to_period("M")
     monthly = (
@@ -230,6 +227,21 @@ def train_daily_and_monthly():
         .reset_index()
     )
     monthly["year_month_start"] = monthly["year_month"].dt.to_timestamp()
+    
+    # Weekly aggregation
+    daily["week_start"] = daily["date"] - pd.to_timedelta(daily["date"].dt.dayofweek, unit="d")
+    weekly = (
+        daily.groupby("week_start")
+        .agg(
+            {
+                target: "sum",
+                "CAISO Total": "mean",
+                "Monthly_Price_Cents_per_kWh": "mean",
+                **{col: "mean" for col in daily.columns if col not in ["date", target, "week_start", "year_month", "day_name", "avg_hourly_cost"] and pd.api.types.is_numeric_dtype(daily[col])},
+            }
+        )
+        .reset_index()
+    )
 
     # Train models (hourly, daily, monthly)
     _, hourly_metrics = _train_and_eval(
@@ -253,8 +265,15 @@ def train_daily_and_monthly():
         feature_exclude=["year_month"],
         model_type="rf"
     )
+    _, weekly_metrics = _train_and_eval(
+        weekly.rename(columns={"week_start": "date"}),
+        target_col=target,
+        model_path=ROOT / "model" / "weekly_spend_model.pkl",
+        feature_exclude=[],
+        model_type="rf"
+    )
 
-    return {"hourly": hourly_metrics, "daily": daily_metrics, "monthly": monthly_metrics}
+    return {"hourly": hourly_metrics, "daily": daily_metrics, "monthly": monthly_metrics, "weekly": weekly_metrics}
 
 
 def main():
@@ -268,6 +287,7 @@ def main():
     if args.print_metrics:
         print("Hourly metrics:", metrics["hourly"])
         print("Daily metrics:", metrics["daily"])
+        print("Weekly metrics:", metrics["weekly"])
         print("Monthly metrics:", metrics["monthly"])
 
 

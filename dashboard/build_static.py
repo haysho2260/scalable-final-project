@@ -255,13 +255,69 @@ def build():
             pred_val = row["prediction"]
             if "hour" in str(row["for"]):
                 return f"${pred_val:.4f}"
-            elif "day" in str(row["for"]):
+            elif "day" in str(row["for"]) or "week" in str(row["for"]):
                 return f"${pred_val:.2f}"
             else:
                 return f"${pred_val:,.2f}"
                 
-        preds_display["prediction"] = preds_display.apply(format_prediction, axis=1)
+        preds_display["prediction_text"] = preds_display.apply(format_prediction, axis=1)
         
+        # Add a chart for upcoming predictions
+        html_parts.append("<div id='predictions-chart-container' class='mb-4'></div>")
+        
+        # Prepare JSON for JS-based charting of predictions
+        preds_json = []
+        for _, row in preds_display.iterrows():
+            preds_json.append({
+                "date": row["feature_date"].strftime("%Y-%m-%d %H:%M:%S"),
+                "val": float(row["prediction"]),
+                "for": str(row["for"]),
+                "target": str(row["target"])
+            })
+        
+        html_parts.append(f"""
+<script>
+const upcomingPreds = {json.dumps(preds_json)};
+function updatePredictionsChart(granularity) {{
+    const container = document.getElementById('predictions-chart-container');
+    if (!container) return;
+    
+    const filtered = upcomingPreds.filter(p => {{
+        if (granularity === 'hourly') return p.for.includes('hour');
+        if (granularity === 'daily') return p.for.includes('day');
+        if (granularity === 'weekly') return p.for.includes('week');
+        if (granularity === 'monthly') return p.for.includes('month');
+        return false;
+    }});
+    
+    if (filtered.length === 0) {{
+        container.innerHTML = '<p class=\"text-muted\">No upcoming predictions for this view.</p>';
+        return;
+    }}
+    
+    const trace = {{
+        x: filtered.map(p => p.date),
+        y: filtered.map(p => p.val),
+        type: 'scatter',
+        mode: 'lines+markers',
+        name: 'Predicted Cost',
+        line: {{ color: '#3b82f6', width: 3 }},
+        marker: {{ size: 8 }}
+    }};
+    
+    const layout = {{
+        title: `Upcoming ${{granularity.charAt(0).toUpperCase() + granularity.slice(1)}} Predictions`,
+        xaxis: {{ title: 'Time' }},
+        yaxis: {{ title: 'Predicted Cost (USD)' }},
+        margin: {{ t: 40, b: 40, l: 60, r: 20 }},
+        height: 350
+    }};
+    
+    Plotly.newPlot(container, [trace], layout, {{responsive: true}});
+}}
+</script>
+""")
+
         # Add the table with a specific ID and custom row attributes for filtering
         html_parts.append("<div class='table-responsive'>")
         html_parts.append("<table id='predictions-table' class='table table-sm table-striped mb-0'>")
@@ -270,13 +326,12 @@ def build():
         
         for _, row in preds_display.iterrows():
             f_date = row["feature_date"].strftime("%Y-%m-%d")
-            # For monthly predictions, also add the month key
             f_month = row["feature_date"].strftime("%Y-%m")
             
             row_class = "prediction-row"
             html_parts.append(f"<tr class='{row_class}' data-date='{f_date}' data-month='{f_month}'>")
             html_parts.append(f"<td>{row['target']}</td>")
-            html_parts.append(f"<td>{row['prediction']}</td>")
+            html_parts.append(f"<td>{row['prediction_text']}</td>")
             html_parts.append(f"<td>{row['for']}</td>")
             html_parts.append(f"<td>{row['feature_date']}</td>")
             html_parts.append("</tr>")
@@ -987,6 +1042,7 @@ def build():
       date = document.getElementById('daily-date-select')?.value || "";
     }
     filterPredictionsTable(granularity, date);
+    updatePredictionsChart(granularity);
   }
 
   // Hook into existing date selectors

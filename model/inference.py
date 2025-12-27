@@ -32,6 +32,7 @@ from model.train import build_hourly_dataset
 RESULTS_DIR = ROOT / "results"
 HOURLY_MODEL_PATH = ROOT / "model" / "hourly_spend_model.pkl"
 DAILY_MODEL_PATH = ROOT / "model" / "daily_spend_model.pkl"
+WEEKLY_MODEL_PATH = ROOT / "model" / "weekly_spend_model.pkl"
 MONTHLY_MODEL_PATH = ROOT / "model" / "monthly_spend_model.pkl"
 TARGET_COL = "Estimated_Hourly_Cost_USD"
 
@@ -96,7 +97,27 @@ def _build_daily_and_monthly(hourly: pd.DataFrame) -> tuple[pd.DataFrame, pd.Dat
         .reset_index()
     )
     monthly["year_month_start"] = monthly["year_month"].dt.to_timestamp()
-    return daily, monthly
+    
+    # Weekly aggregation
+    daily["week_start"] = daily["date"] - pd.to_timedelta(daily["date"].dt.dayofweek, unit="d")
+    weekly = (
+        daily.groupby("week_start")
+        .agg(
+            {
+                TARGET_COL: "sum",
+                "CAISO Total": "mean",
+                "Monthly_Price_Cents_per_kWh": "mean",
+                **{
+                    col: "mean"
+                    for col in daily.columns
+                    if col not in ["date", TARGET_COL, "week_start", "year_month"]
+                    and pd.api.types.is_numeric_dtype(daily[col])
+                },
+            }
+        )
+        .reset_index()
+    )
+    return daily, weekly, monthly
 
 
 def _predict_next(
@@ -516,15 +537,17 @@ def run_inference():
 
     hourly = build_hourly_dataset()
 
-    daily, monthly = _build_daily_and_monthly(hourly)
+    daily, weekly, monthly = _build_daily_and_monthly(hourly)
     # Persist history for dashboard use
     hourly_history = hourly[["timestamp", "Date", "HE", TARGET_COL]].copy()
     hourly_history.to_csv(RESULTS_DIR / "hourly_history.csv", index=False)
     daily.to_csv(RESULTS_DIR / "daily_history.csv", index=False)
+    weekly.to_csv(RESULTS_DIR / "weekly_history.csv", index=False)
     monthly.to_csv(RESULTS_DIR / "monthly_history.csv", index=False)
 
     hourly_model, hourly_features = _load_model(HOURLY_MODEL_PATH)
     daily_model, daily_features = _load_model(DAILY_MODEL_PATH)
+    weekly_model, weekly_features = _load_model(WEEKLY_MODEL_PATH)
     monthly_model, monthly_features = _load_model(MONTHLY_MODEL_PATH)
 
     # Get last data point and current time
@@ -543,6 +566,7 @@ def run_inference():
     # Only predict next 7 days of hourly, 30 days of daily, 12 months of monthly
     max_pred_hour = last_hourly_timestamp + timedelta(days=7)
     max_pred_day = last_daily_date + timedelta(days=30)
+    max_pred_week = pd.to_datetime(weekly["week_start"].iloc[-1]) + timedelta(weeks=12)
     max_pred_month = last_monthly_date + DateOffset(months=12)
 
     # Use the earlier of: current time or max prediction window
@@ -550,6 +574,8 @@ def run_inference():
                           pd.to_datetime(max_pred_hour))
     pred_day_limit = min(pd.to_datetime(current_day),
                          pd.to_datetime(max_pred_day))
+    pred_week_limit = min(pd.to_datetime(current_day),
+                          pd.to_datetime(max_pred_week))
     pred_month_limit = min(pd.to_datetime(current_month),
                            pd.to_datetime(max_pred_month))
 
@@ -644,6 +670,38 @@ def run_inference():
             daily_df = pd.concat(
                 [daily_df] + daily_new_rows_buffer, ignore_index=True)
 
+    # Weekly predictions: from last week + 1 to limit
+    last_weekly_date = pd.to_datetime(weekly["week_start"].iloc[-1])
+    if last_weekly_date < pred_week_limit:
+        weekly_df = weekly.rename(columns={"week_start": "date"})
+        current_pred_week = last_weekly_date + timedelta(weeks=1)
+        max_weeks = 12  # Max 12 weeks of weekly predictions
+        week_count = 0
+
+        print(
+            f"Generating weekly predictions from {current_pred_week} to {pred_week_limit} (max {max_weeks} weeks)...")
+        while current_pred_week <= pred_week_limit and week_count < max_weeks:
+            print(f"  Progress: {week_count}/{max_weeks} weeks")
+            pred = _predict_next(
+                weekly_model,
+                weekly_features,
+                weekly_df,
+                "date",
+                f"week_{current_pred_week.strftime('%Y-%m-%d')}",
+                freq="W",
+                target_date=current_pred_week,
+            )
+            all_predictions.append(pred)
+
+            # Update weekly_df with the prediction for next iteration
+            new_row = weekly_df.iloc[-1:].copy()
+            new_row["date"] = current_pred_week
+            new_row[TARGET_COL] = pred["prediction"].iloc[0]
+            weekly_df = pd.concat([weekly_df, new_row], ignore_index=True)
+
+            current_pred_week += timedelta(weeks=1)
+            week_count += 1
+
     # Monthly predictions: from last month + 1 to limit
     if last_monthly_date < pred_month_limit:
         monthly_df = monthly.rename(columns={"year_month_start": "date"})
@@ -707,7 +765,15 @@ def run_inference():
             "next_month",
             freq="M",
         )
-        results = pd.concat([next_hour_pred, next_day_pred,
+        next_week_pred = _predict_next(
+            weekly_model,
+            weekly_features,
+            weekly.rename(columns={"week_start": "date"}),
+            "date",
+            "next_week",
+            freq="W",
+        )
+        results = pd.concat([next_hour_pred, next_day_pred, next_week_pred,
                             next_month_pred], ignore_index=True)
 
     out_path = RESULTS_DIR / "predictions.csv"
