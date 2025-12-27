@@ -106,35 +106,93 @@ def build():
         hourly = hourly_features
 
 
-    # Calculate weekly from daily - ensure proper week boundaries and seasonal variation
-    weekly = pd.DataFrame()
-    if not daily.empty and "Estimated_Hourly_Cost_USD" in daily:
-        daily["date"] = pd.to_datetime(daily["date"])
-        # Get the Monday of each week (week start)
-        daily["week_start"] = daily["date"] - \
-            pd.to_timedelta(daily["date"].dt.dayofweek, unit="d")
-        # Group by week_start to get weekly totals (not cumulative)
-        weekly = (
-            daily.groupby("week_start")
-            .agg({"Estimated_Hourly_Cost_USD": "sum"})
-            .reset_index()
-            .sort_values("week_start")
-        )
+    # Process data for unified view
+    unified_data = []
+
+    # 1. Historical Data
+    # Hourly
+    if not hourly.empty:
+        for _, row in hourly.iterrows():
+            unified_data.append({
+                "date": row["timestamp"].strftime("%Y-%m-%d %H:%M:%S"),
+                "val": float(row["Estimated_Hourly_Cost_USD"]),
+                "for": "hourly",
+                "type": "historical"
+            })
+    
+    # Daily
+    if not daily.empty:
+        for _, row in daily.iterrows():
+            unified_data.append({
+                "date": pd.to_datetime(row["date"]).strftime("%Y-%m-%d"),
+                "val": float(row["Estimated_Hourly_Cost_USD"]),
+                "for": "daily",
+                "type": "historical"
+            })
+    
+    # Weekly
+    if not daily.empty:
+        daily["date_dt"] = pd.to_datetime(daily["date"])
+        daily["week_start"] = daily["date_dt"] - pd.to_timedelta(daily["date_dt"].dt.dayofweek, unit="d")
+        weekly = daily.groupby("week_start")["Estimated_Hourly_Cost_USD"].sum().reset_index()
+        for _, row in weekly.iterrows():
+            unified_data.append({
+                "date": row["week_start"].strftime("%Y-%m-%d"),
+                "val": float(row["Estimated_Hourly_Cost_USD"]),
+                "for": "weekly",
+                "type": "historical"
+            })
+            
+    # Monthly
+    if not monthly.empty:
+        for _, row in monthly.iterrows():
+            unified_data.append({
+                "date": pd.to_datetime(row["year_month_start"]).strftime("%Y-%m"),
+                "val": float(row["Estimated_Hourly_Cost_USD"]),
+                "for": "monthly",
+                "type": "historical"
+            })
+
+    # 2. Prediction Data
+    if not preds.empty:
+        preds["feature_date"] = pd.to_datetime(preds["feature_date"])
+        for _, row in preds.iterrows():
+            gran = str(row["for"]).lower()
+            if "hour" in gran: g = "hourly"
+            elif "day" in gran: g = "daily"
+            elif "week" in gran: g = "weekly"
+            elif "month" in gran: g = "monthly"
+            else: g = "unknown"
+            
+            # Format date based on granularity for consistency
+            d_val = row["feature_date"]
+            if g == "monthly": d_str = d_val.strftime("%Y-%m")
+            elif g == "hourly": d_str = d_val.strftime("%Y-%m-%d %H:%M:%S")
+            else: d_str = d_val.strftime("%Y-%m-%d")
+            
+            unified_data.append({
+                "date": d_str,
+                "val": float(row["prediction"]),
+                "for": g,
+                "type": "prediction"
+            })
 
     html_parts = [
         "<html>",
         "<head>",
-        "<title>Residential Energy Spending Predictions Dashboard</title>",
+        "<title>Residential Energy Spending: History & Predictions</title>",
         "<link rel='stylesheet' href='https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css'>",
+        "<link rel='stylesheet' href='https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css'>",
         "<script src='https://cdn.plot.ly/plotly-latest.min.js'></script>",
+        "<script src='https://cdn.jsdelivr.net/npm/flatpickr'></script>",
         "<style>",
         "body { font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f8f9fa; padding-top: 56px; }",
         ".navbar { z-index: 1030; margin-bottom: 0 !important; width: 100%; }",
         ".sidebar { background-color: #212529; color: #e5e7eb; min-height: calc(100vh - 56px); padding: 1rem; position: fixed; left: 0; top: 56px; z-index: 1020; transition: transform 0.3s ease, margin-left 0.3s ease; width: 250px; border-top: 1px solid rgba(255,255,255,0.1); }",
         ".sidebar h6 { font-size: 0.75rem; letter-spacing: .08em; text-transform: uppercase; color: #9ca3af; margin-bottom: 1rem; }",
         ".sidebar .form-label { font-size: 0.8rem; color: #d1d5db; margin-bottom: 0.5rem; }",
-        ".sidebar .form-select { background-color: #343a40; border-color: #495057; color: #e5e7eb; }",
-        ".sidebar .form-select:focus { background-color: #343a40; border-color: #6c757d; color: #e5e7eb; }",
+        ".sidebar .form-select, .sidebar .form-control { background-color: #343a40; border-color: #495057; color: #e5e7eb; }",
+        ".sidebar .form-select:focus, .sidebar .form-control:focus { background-color: #343a40; border-color: #6c757d; color: #e5e7eb; }",
         ".stat-card { background: white; border-radius: 8px; padding: 1rem; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }",
         ".sidebar.hidden { transform: translateX(-250px); }",
         ".hamburger-btn { background: none; border: none; color: white; font-size: 1.5rem; padding: 0.5rem; cursor: pointer; margin-right: 0.5rem; }",
@@ -146,197 +204,351 @@ def build():
         "main { transition: margin-left 0.3s ease; margin-left: 250px; }",
         "main.full-width { margin-left: 0; }",
         "@media (max-width: 767px) { main { margin-left: 0; } }",
+        ".sidebar .nav-link { color: #d1d5db; padding: 0.5rem 1rem; border-radius: 4px; margin-bottom: 0.25rem; font-size: 0.9rem; border: 1px solid transparent; transition: all 0.2s; cursor: pointer; }",
+        ".sidebar .nav-link:hover { background-color: #343a40; color: white; }",
+        ".sidebar .nav-link.active { background-color: #3b82f6; color: white; border-color: #3b82f6; }",
+        ".sidebar .nav-link i { margin-right: 0.5rem; }",
+        ".section-hidden { display: none; }",
+        ".about-content { line-height: 1.7; color: #374151; }",
+        ".about-content h2 { color: #111827; margin-top: 1.5rem; }",
+        ".about-content p { margin-bottom: 1.25rem; }",
         "</style>",
         "</head>",
         "<body>",
         "<nav class='navbar navbar-dark bg-dark px-3 fixed-top'>",
         "<button class='hamburger-btn' id='sidebar-toggle' aria-label='Toggle menu'>☰</button>",
-        "<span class='navbar-brand ms-2'>Residential Energy Spending Predictions</span>",
+        "<span class='navbar-brand ms-2'>Residential Energy Spending</span>",
         "</nav>",
         "<div class='sidebar-overlay' id='sidebar-overlay'></div>",
         "<div class='container-fluid'>",
         "<div class='row'>",
         "<aside class='col-md-3 col-lg-2 sidebar' id='sidebar'>",
-        "<h6>Prediction Period</h6>",
+        "<div class='mb-4'>",
+        "<h6>Navigation</h6>",
+        "<div class='nav flex-column'>",
+        "<div class='nav-link active' id='nav-dashboard'>Dashboard</div>",
+        "<div class='nav-link' id='nav-about'>About</div>",
+        "</div>",
+        "</div>",
+        "<div id='sidebar-filters'>",
+        "<h6>Time Filtering</h6>",
         "<div class='mb-3'>",
         "<label for='granularity' class='form-label'>View</label>",
-        "<select id='granularity' class='form-select form-select-sm'>"
-        "<option value='hourly'>Hourly</option>"
-        "<option value='daily'>Daily</option>"
-        "<option value='weekly'>Weekly</option>"
-        "<option value='monthly' selected>Monthly</option>"
+        "<select id='granularity' class='form-select form-select-sm'>",
+        "<option value='hourly'>Hourly</option>",
+        "<option value='daily'>Daily</option>",
+        "<option value='weekly'>Weekly</option>",
+        "<option value='monthly' selected>Monthly</option>",
         "</select>",
+        "</div>",
+        "<div class='mb-3'>",
+        "<label for='date-range' class='form-label'>Date Range</label>",
+        "<input type='text' id='date-range' class='form-control form-control-sm' placeholder='Select range...'>",
+        "</div>",
         "</div>",
         "</aside>",
         "<main class='col-md-9 col-lg-10 py-3'>",
+        "<div id='section-dashboard'>",
     ]
 
-    # Upcoming Predictions Section (Core)
-    if not preds.empty:
-        html_parts.append(
-            "<div class='card mb-3'><div class='card-header fw-semibold'>Upcoming Predictions</div><div class='card-body'>"
-        )
-        preds_display = preds.copy()
-        
-        # Ensure feature_date is datetime
-        preds_display["feature_date"] = pd.to_datetime(preds_display["feature_date"])
-        
-        def format_prediction(row):
-            pred_val = row["prediction"]
-            if "hour" in str(row["for"]):
-                return f"${pred_val:.4f}"
-            elif "day" in str(row["for"]) or "week" in str(row["for"]):
-                return f"${pred_val:.2f}"
-            else:
-                return f"${pred_val:,.2f}"
-                
-        preds_display["prediction_text"] = preds_display.apply(format_prediction, axis=1)
-        
-        # Add a chart for upcoming predictions
-        html_parts.append("<div id='predictions-chart-container' class='mb-4'></div>")
-        
-        # Prepare JSON for JS-based charting of predictions
-        preds_json = []
-        for _, row in preds_display.iterrows():
-            preds_json.append({
-                "date": row["feature_date"].strftime("%Y-%m-%d %H:%M:%S"),
-                "val": float(row["prediction"]),
-                "for": str(row["for"]),
-                "target": str(row["target"])
-            })
-        
-        html_parts.append(f"""
+    # Unified Dashboard Section
+    html_parts.append(
+        "<div class='card mb-3'><div class='card-header fw-semibold'>Energy Spending: History & Predictions</div><div class='card-body'>"
+    )
+    
+    # Add containers for chart and table
+    html_parts.append("<div id='energy-chart-container' class='mb-4'></div>")
+    html_parts.append("<div class='table-responsive'>")
+    html_parts.append("<table id='energy-table' class='table table-sm table-striped mb-0'>")
+    html_parts.append("<thead><tr><th>Type</th><th>Cost</th><th>Time</th></tr></thead>")
+    html_parts.append("<tbody id='energy-table-body'></tbody>")
+    html_parts.append("</table></div>")
+    html_parts.append("</div></div>")
+
+    # JavaScript logic for unified view
+    html_parts.append(f"""
 <script>
-const upcomingPreds = {json.dumps(preds_json)};
-function updatePredictionsChart(granularity) {{
-    const container = document.getElementById('predictions-chart-container');
+const allData = {json.dumps(unified_data)};
+
+function updateView() {{
+    const granularity = document.getElementById('granularity').value;
+    const dateRangeStr = document.getElementById('date-range').value;
+    
+    let filtered = allData.filter(d => d.for === granularity);
+    
+    if (dateRangeStr && dateRangeStr.includes(' to ')) {{
+        const [start, end] = dateRangeStr.split(' to ');
+        const startDate = new Date(start);
+        const endDate = new Date(end);
+        endDate.setHours(23, 59, 59); // Include end of day
+        
+        filtered = filtered.filter(d => {{
+            const dDate = new Date(d.date);
+            return dDate >= startDate && dDate <= endDate;
+        }});
+    }}
+    
+    // Sort by date
+    filtered.sort((a, b) => new Date(a.date) - new Date(b.date));
+    
+    updateChart(filtered, granularity);
+    updateTable(filtered);
+}}
+
+function updateChart(data, granularity) {{
+    const container = document.getElementById('energy-chart-container');
     if (!container) return;
     
-    const filtered = upcomingPreds.filter(p => {{
-        if (granularity === 'hourly') return p.for.includes('hour');
-        if (granularity === 'daily') return p.for.includes('day');
-        if (granularity === 'weekly') return p.for.includes('week');
-        if (granularity === 'monthly') return p.for.includes('month');
-        return false;
-    }});
-    
-    if (filtered.length === 0) {{
-        container.innerHTML = '<p class=\"text-muted\">No upcoming predictions for this view.</p>';
+    if (data.length === 0) {{
+        container.innerHTML = '<p class=\"text-muted\">No data available for the selected period.</p>';
         return;
     }}
     
-    const trace = {{
-        x: filtered.map(p => p.date),
-        y: filtered.map(p => p.val),
-        type: 'scatter',
-        mode: 'lines+markers',
-        name: 'Predicted Cost',
-        line: {{ color: '#3b82f6', width: 3 }},
-        marker: {{ size: 8 }}
-    }};
+    const hist = data.filter(d => d.type === 'historical');
+    const pred = data.filter(d => d.type === 'prediction');
+    
+    const traces = [];
+    
+    if (hist.length > 0) {{
+        traces.push({{
+            x: hist.map(d => d.date),
+            y: hist.map(d => d.val),
+            type: 'scatter',
+            mode: 'lines+markers',
+            name: 'Historical Cost',
+            line: {{ color: '#64748b', width: 2 }},
+            marker: {{ size: 6 }}
+        }});
+    }}
+    
+    if (pred.length > 0) {{
+        traces.push({{
+            x: pred.map(d => d.date),
+            y: pred.map(d => d.val),
+            type: 'scatter',
+            mode: 'lines+markers',
+            name: 'Predicted Cost',
+            line: {{ color: '#3b82f6', width: 3, dash: 'dash' }},
+            marker: {{ size: 8 }}
+        }});
+    }}
     
     const layout = {{
-        title: `Upcoming ${{granularity.charAt(0).toUpperCase() + granularity.slice(1)}} Predictions`,
+        title: `${{granularity.charAt(0).toUpperCase() + granularity.slice(1)}} Energy Spending`,
         xaxis: {{ title: 'Time' }},
-        yaxis: {{ title: 'Predicted Cost (USD)' }},
+        yaxis: {{ title: 'Cost (USD)' }},
         margin: {{ t: 40, b: 40, l: 60, r: 20 }},
-        height: 450
+        height: 450,
+        legend: {{ orientation: 'h', y: -0.2 }}
     }};
     
-    Plotly.newPlot(container, [trace], layout, {{responsive: true}});
+    Plotly.newPlot(container, traces, layout, {{responsive: true}});
 }}
+
+function updateTable(data) {{
+    const tbody = document.getElementById('energy-table-body');
+    if (!tbody) return;
+    
+    tbody.innerHTML = data.reverse().map(d => `
+        <tr>
+            <td><span class="badge ${{d.type === 'historical' ? 'bg-secondary' : 'bg-primary'}}">${{d.type.charAt(0).toUpperCase() + d.type.slice(1)}}</span></td>
+            <td><strong>$${{d.val.toFixed(d.for === 'hourly' ? 4 : 2)}}</strong></td>
+            <td class="text-muted small">${{d.date}}</td>
+        </tr>
+    `).join('');
+}}
+
+// Initialize flatpickr
+flatpickr('#date-range', {{
+    mode: 'range',
+    dateFormat: 'Y-m-d',
+    onChange: updateView
+}});
+
+document.getElementById('granularity').addEventListener('change', updateView);
+
+    html_parts.append("</div>") # End section-dashboard
+    
+    # About Section
+    html_parts.append(f"""
+<div id='section-about' class='section-hidden'>
+    <div class='card mb-3'>
+        <div class='card-header fw-semibold'>About This Project</div>
+        <div class='card-body about-content'>
+            <h2>Motivation</h2>
+            <p>Southern California experiences some of the highest electricity demand in the United States due to a combination of factors such as widespread air-conditioning use, a growing number of electric vehicles, and increasing residential and commercial energy consumption. During hot summer months, cooling loads drive peak demand in the late afternoon and evening, while electric vehicle charging and household activities further elevate nighttime consumption. These demand patterns often lead to periods of high electricity prices, even when consumers are unaware of the cost differences throughout the day.</p>
+            
+            <p>At the same time, many energy-intensive activities - such as EV charging, running laundry, or operating large appliances - can be shifted to hours when electricity is cheaper. Identifying these "optimal usage windows" has the potential to reduce household energy bills, ease stress on the electric grid, and support more efficient use of renewable generation.</p>
+            
+            <p>However, hourly electricity prices are not always publicly available for Southern California, and consumers rarely have access to clear or actionable guidance about when electricity is most affordable. This project addresses this gap by estimating hourly electricity costs using available demand, generation, and weather data, and by forecasting prices for the next day. With these predictions, the system provides users with intuitive recommendations about the best times to use electricity.</p>
+            
+            <p>By helping consumers shift demand to lower-cost hours, the project supports both economic savings and grid reliability, while also encouraging more sustainable energy behavior in a region where electricity demand continues to rise.</p>
+        </div>
+    </div>
+</div>
+""")
+
+    # Unified Dashboard Script (Historical + Predictions)
+    html_parts.append(f"""
+<script>
+const allData = {json.dumps(unified_data)};
+
+function updateView() {{
+    const granularityIdx = document.getElementById('granularity');
+    if (!granularityIdx) return;
+    const granularity = granularityIdx.value;
+    const dateRangeStr = document.getElementById('date-range').value;
+    
+    let filtered = allData.filter(d => d.for === granularity);
+    
+    if (dateRangeStr && dateRangeStr.includes(' to ')) {{
+        const [start, end] = dateRangeStr.split(' to ');
+        const startDate = new Date(start);
+        const endDate = new Date(end);
+        endDate.setHours(23, 59, 59);
+        
+        filtered = filtered.filter(d => {{
+            const dDate = new Date(d.date);
+            return dDate >= startDate && dDate <= endDate;
+        }});
+    }}
+    
+    filtered.sort((a, b) => new Date(a.date) - new Date(b.date));
+    updateChart(filtered, granularity);
+    updateTable(filtered);
+}}
+
+function updateChart(data, granularity) {{
+    const container = document.getElementById('energy-chart-container');
+    if (!container) return;
+    if (data.length === 0) {{
+        container.innerHTML = '<p class=\"text-muted\">No data available for the selected period.</p>';
+        return;
+    }}
+    const hist = data.filter(d => d.type === 'historical');
+    const pred = data.filter(d => d.type === 'prediction');
+    const traces = [];
+    if (hist.length > 0) {{
+        traces.push({{
+            x: hist.map(d => d.date),
+            y: hist.map(d => d.val),
+            type: 'scatter',
+            mode: 'lines+markers',
+            name: 'Historical Cost',
+            line: {{ color: '#64748b', width: 2 }},
+            marker: {{ size: 6 }}
+        }});
+    }}
+    if (pred.length > 0) {{
+        traces.push({{
+            x: pred.map(d => d.date),
+            y: pred.map(d => d.val),
+            type: 'scatter',
+            mode: 'lines+markers',
+            name: 'Predicted Cost',
+            line: {{ color: '#3b82f6', width: 3, dash: 'dash' }},
+            marker: {{ size: 8 }}
+        }});
+    }}
+    const layout = {{
+        title: `${{granularity.charAt(0).toUpperCase() + granularity.slice(1)}} Energy Spending`,
+        xaxis: {{ title: 'Time' }},
+        yaxis: {{ title: 'Cost (USD)' }},
+        margin: {{ t: 40, b: 40, l: 60, r: 20 }},
+        height: 450,
+        legend: {{ orientation: 'h', y: -0.2 }}
+    }};
+    Plotly.newPlot(container, traces, layout, {{responsive: true}});
+}}
+
+function updateTable(data) {{
+    const tbody = document.getElementById('energy-table-body');
+    if (!tbody) return;
+    tbody.innerHTML = [...data].reverse().map(d => `
+        <tr>
+            <td><span class="badge ${{d.type === 'historical' ? 'bg-secondary' : 'bg-primary'}}">${{d.type.charAt(0).toUpperCase() + d.type.slice(1)}}</span></td>
+            <td><strong>$${{d.val.toFixed(d.for === 'hourly' ? 4 : 2)}}</strong></td>
+            <td class="text-muted small">${{d.date}}</td>
+        </tr>
+    `).join('');
+}}
+
+flatpickr('#date-range', {{ mode: 'range', dateFormat: 'Y-m-d', onChange: updateView }});
+document.getElementById('granularity').addEventListener('change', updateView);
+
+// Navigation Logic
+(function() {{
+    const navDashboard = document.getElementById('nav-dashboard');
+    const navAbout = document.getElementById('nav-about');
+    const sectionDashboard = document.getElementById('section-dashboard');
+    const sectionAbout = document.getElementById('section-about');
+    const sidebarFilters = document.getElementById('sidebar-filters');
+
+    function switchSection(section) {{
+        if (section === 'dashboard') {{
+            sectionDashboard.classList.remove('section-hidden');
+            sectionAbout.classList.add('section-hidden');
+            navDashboard.classList.add('active');
+            navAbout.classList.remove('active');
+            sidebarFilters.style.display = 'block';
+            updateView();
+        }} else {{
+            sectionDashboard.classList.add('section-hidden');
+            sectionAbout.classList.remove('section-hidden');
+            navDashboard.classList.remove('active');
+            navAbout.classList.add('active');
+            sidebarFilters.style.display = 'none';
+        }}
+    }}
+
+    navDashboard.addEventListener('click', () => switchSection('dashboard'));
+    navAbout.addEventListener('click', () => switchSection('about'));
+    
+    updateView();
+}})();
 </script>
 """)
 
-        # Add the table with a specific ID and custom row attributes for filtering
-        html_parts.append("<div class='table-responsive'>")
-        html_parts.append("<table id='predictions-table' class='table table-sm table-striped mb-0'>")
-        html_parts.append("<thead><tr><th>Prediction</th><th>Time</th></tr></thead>")
-        html_parts.append("<tbody>")
-        
-        for _, row in preds_display.iterrows():
-            f_date = row["feature_date"].strftime("%Y-%m-%d")
-            f_month = row["feature_date"].strftime("%Y-%m")
-            f_for = str(row["for"])
-            
-            row_class = "prediction-row"
-            html_parts.append(f"<tr class='{row_class}' data-date='{f_date}' data-month='{f_month}' data-for='{f_for}'>")
-            html_parts.append(f"<td>{row['prediction_text']}</td>")
-            html_parts.append(f"<td>{row['feature_date']}</td>")
-            html_parts.append("</tr>")
-            
-        html_parts.append("</tbody></table></div>")
-        html_parts.append("</div></div>")
-
-    # JavaScript for toggling
+    # Sidebar Toggle Logic
     html_parts.append("""
 <script>
-  const sidebarToggle = document.getElementById('sidebar-toggle');
-  const sidebar = document.getElementById('sidebar');
-  const sidebarOverlay = document.getElementById('sidebar-overlay');
-  const mainContent = document.querySelector('main');
-  
-  function toggleSidebar() {
-    const isHidden = sidebar.classList.toggle('hidden');
-    if (window.innerWidth >= 768) {
-      if (isHidden) {
-        mainContent.classList.add('full-width');
-      } else {
-        mainContent.classList.remove('full-width');
-      }
-    } else {
-      sidebarOverlay.classList.toggle('show');
-    }
-  }
-  
-  sidebarToggle.addEventListener('click', toggleSidebar);
-  if (sidebarOverlay) {
-    sidebarOverlay.addEventListener('click', toggleSidebar);
-  }
-  
-  // Initialize sidebar state - visible on desktop, hidden on mobile
-  function updateSidebarState() {
-    if (window.innerWidth >= 768) {
-      sidebar.classList.remove('hidden');
-      mainContent.classList.remove('full-width');
-      if (sidebarOverlay) sidebarOverlay.classList.remove('show');
-    } else {
-      sidebar.classList.add('hidden');
-      mainContent.classList.add('full-width');
-      if (sidebarOverlay) sidebarOverlay.classList.remove('show');
-    }
-  }
-  
-  updateSidebarState();
-  window.addEventListener('resize', updateSidebarState);
-  
-  // Time period view toggling
-  const select = document.getElementById('granularity');
-  
-  function updateTableFiltering(granularity) {
-    const rows = document.querySelectorAll('.prediction-row');
-    rows.forEach(row => {
-      const type = row.getAttribute('data-for') || "";
-      let show = false;
-      if (granularity === 'hourly' && type.includes('hour')) show = true;
-      else if (granularity === 'daily' && type.includes('day')) show = true;
-      else if (granularity === 'weekly' && type.includes('week')) show = true;
-      else if (granularity === 'monthly' && type.includes('month')) show = true;
+  (function() {
+      const sidebarToggle = document.getElementById('sidebar-toggle');
+      const sidebar = document.getElementById('sidebar');
+      const sidebarOverlay = document.getElementById('sidebar-overlay');
+      const mainContent = document.querySelector('main');
       
-      row.style.display = show ? '' : 'none';
-    });
-  }
-
-  function runFilter() {
-    const granularity = select.value;
-    updateTableFiltering(granularity);
-    updatePredictionsChart(granularity);
-  }
-
-  select.addEventListener('change', runFilter);
-
-  // Initial update
-  runFilter();
+      function toggleSidebar() {
+        const isHidden = sidebar.classList.toggle('hidden');
+        if (window.innerWidth >= 768) {
+          if (isHidden) {
+            mainContent.classList.add('full-width');
+          } else {
+            mainContent.classList.remove('full-width');
+          }
+        } else {
+          sidebarOverlay.classList.toggle('show');
+        }
+      }
+      
+      if (sidebarToggle) sidebarToggle.addEventListener('click', toggleSidebar);
+      if (sidebarOverlay) sidebarOverlay.addEventListener('click', toggleSidebar);
+      
+      function updateSidebarState() {
+        if (window.innerWidth >= 768) {
+          sidebar.classList.remove('hidden');
+          mainContent.classList.remove('full-width');
+          if (sidebarOverlay) sidebarOverlay.classList.remove('show');
+        } else {
+          sidebar.classList.add('hidden');
+          mainContent.classList.add('full-width');
+          if (sidebarOverlay) sidebarOverlay.classList.remove('show');
+        }
+      }
+      
+      updateSidebarState();
+      window.addEventListener('resize', updateSidebarState);
+  })();
 </script>
 """)
 
