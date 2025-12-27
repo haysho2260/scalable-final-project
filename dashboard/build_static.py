@@ -212,12 +212,18 @@ def build():
         ".about-content { line-height: 1.7; color: #374151; }",
         ".about-content h2 { color: #111827; margin-top: 1.5rem; }",
         ".about-content p { margin-bottom: 1.25rem; }",
+        ".sub-header { border-left: 4px solid #3b82f6; padding-left: 0.75rem; margin-bottom: 1.5rem; font-weight: 600; color: #1f2937; }",
+        "th.sortable { cursor: pointer; position: relative; padding-right: 1.5rem !important; }",
+        "th.sortable::after { content: '↕'; position: absolute; right: 0.5rem; opacity: 0.3; }",
+        "th.sortable.asc::after { content: '↑'; opacity: 1; color: #3b82f6; }",
+        "th.sortable.desc::after { content: '↓'; opacity: 1; color: #3b82f6; }",
+        ".pagination-controls { display: flex; justify-content: space-between; align-items: center; margin-top: 1rem; flex-wrap: wrap; gap: 0.5rem; }",
         "</style>",
         "</head>",
         "<body>",
         "<nav class='navbar navbar-dark bg-dark px-3 fixed-top'>",
         "<button class='hamburger-btn' id='sidebar-toggle' aria-label='Toggle menu'>☰</button>",
-        "<span class='navbar-brand ms-2'>Residential Energy Spending</span>",
+        "<span class='navbar-brand ms-2'>California Residential Energy Spending</span>",
         "</nav>",
         "<div class='sidebar-overlay' id='sidebar-overlay'></div>",
         "<div class='container-fluid'>",
@@ -249,24 +255,56 @@ def build():
         "</aside>",
         "<main class='col-md-9 col-lg-10 py-3'>",
         "<div id='section-dashboard'>",
+        "    <div class='card mb-3'>",
+        "        <div class='card-header fw-semibold text-primary'>Visual Trends</div>",
+        "        <div class='card-body'>",
+        "            <div id='energy-chart-container' class='mb-4'></div>",
+        "        </div>",
+        "    </div>",
+        "    <div class='card mb-3'>",
+        "        <div class='card-header fw-semibold text-primary'>Detailed Data Breakdown</div>",
+        "        <div class='card-body'>",
+        "            <div class='row g-3 mb-3'>",
+        "                <div class='col-auto'>",
+        "                    <label class='form-label small fw-bold text-muted mb-1'>Filter by Type</label>",
+        "                    <select id='table-type-filter' class='form-select form-select-sm' style='width: 150px;'>",
+        "                        <option value='all'>All Types</option>",
+        "                        <option value='historical'>Historical</option>",
+        "                        <option value='prediction'>Prediction</option>",
+        "                    </select>",
+        "                </div>",
+        "                <div class='col-auto ms-auto d-flex align-items-end'>",
+        "                    <label class='form-label small fw-bold text-muted me-2 mb-2'>Show</label>",
+        "                    <select id='table-page-size' class='form-select form-select-sm' style='width: 70px;'>",
+        "                        <option value='10'>10</option>",
+        "                        <option value='25'>25</option>",
+        "                        <option value='50'>50</option>",
+        "                    </select>",
+        "                </div>",
+        "            </div>",
+        "            <div class='table-responsive'>",
+        "                <table id='energy-table' class='table table-sm table-hover table-striped mb-0'>",
+        "                    <thead>",
+        "                        <tr>",
+        "                            <th>Type</th>",
+        "                            <th class='sortable' data-sort='val' id='sort-cost'>Cost</th>",
+        "                            <th class='sortable' data-sort='date' id='sort-time'>Time</th>",
+        "                        </tr>",
+        "                    </thead>",
+        "                    <tbody id='energy-table-body'></tbody>",
+        "                </table>",
+        "            </div>",
+        "            <div class='pagination-controls'>",
+        "                <div class='small text-muted' id='pagination-info'>Showing 1 to 10 of 0 entries</div>",
+        "                <nav aria-label='Table navigation'>",
+        "                    <ul class='pagination pagination-sm mb-0' id='pagination-list'></ul>",
+        "                </nav>",
+        "            </div>",
+        "        </div>",
+        "    </div>",
+        "</div>",
     ]
 
-    # Unified Dashboard Section
-    html_parts.append("<div id='section-dashboard'>")
-    html_parts.append(
-        "<div class='card mb-3'><div class='card-header fw-semibold text-primary'>Energy Spending: History & Predictions</div><div class='card-body'>"
-    )
-    
-    # Add containers for chart and table
-    html_parts.append("<div id='energy-chart-container' class='mb-4'></div>")
-    html_parts.append("<div class='table-responsive'>")
-    html_parts.append("<table id='energy-table' class='table table-sm table-striped mb-0'>")
-    html_parts.append("<thead><tr><th>Type</th><th>Cost</th><th>Time</th></tr></thead>")
-    html_parts.append("<tbody id='energy-table-body'></tbody>")
-    html_parts.append("</table></div>")
-    html_parts.append("</div></div>")
-    html_parts.append("</div>") # End section-dashboard
-    
     # About Section
     html_parts.append(f"""
 <div id='section-about' class='section-hidden'>
@@ -286,9 +324,7 @@ def build():
 </div>
 """)
 
-        # Extract valid dates for flatpickr enable list
-    # We want dates that actually have any data for the current granularity
-    # But flatpickr 'enable' is better as a global list of dates that have entries
+    # Extract valid dates for flatpickr enable list
     all_valid_dates = sorted(list(set([d["date"].split(' ')[0] for d in unified_data])))
 
     # Unified Dashboard Script (Historical + Predictions)
@@ -296,7 +332,18 @@ def build():
 <script>
 const allData = {json.dumps(unified_data)};
 const validDates = {json.dumps(all_valid_dates)};
-let fp; // Flatpickr instance
+let fp; 
+
+// Table State
+let tableState = {{
+    data: [], // Currently filtered and windowed data
+    displayData: [], // After type filter and sort
+    typeFilter: 'all',
+    sortCol: 'date',
+    sortDir: 'desc',
+    pageSize: 10,
+    currentPage: 1
+}};
 
 function updateView() {{
     const granularityIdx = document.getElementById('granularity');
@@ -310,42 +357,139 @@ function updateView() {{
     let start, end;
 
     if (granularity === 'hourly') {{
-        // Show the specific day
         start = new Date(selectedDate);
         end = new Date(selectedDate);
         end.setHours(23, 59, 59);
     }} else if (granularity === 'daily') {{
-        // Show the week (Mon-Sun)
         start = new Date(selectedDate);
         const day = start.getDay();
-        const diff = start.getDate() - day + (day === 0 ? -6 : 1); // adjust when day is sunday
+        const diff = start.getDate() - day + (day === 0 ? -6 : 1);
         start.setDate(diff);
         start.setHours(0,0,0,0);
-        
         end = new Date(start);
         end.setDate(start.getDate() + 6);
         end.setHours(23, 59, 59);
     }} else if (granularity === 'weekly') {{
-        // Show the month
         start = new Date(selectedDate.getFullYear(), selectedDate.getMonth(), 1);
         end = new Date(selectedDate.getFullYear(), selectedDate.getMonth() + 1, 0);
         end.setHours(23, 59, 59);
     }} else if (granularity === 'monthly') {{
-        // Show the year
         start = new Date(selectedDate.getFullYear(), 0, 1);
         end = new Date(selectedDate.getFullYear(), 11, 31);
         end.setHours(23, 59, 59);
     }}
 
-    let filtered = allData.filter(d => {{
+    tableState.data = allData.filter(d => {{
         if (d.for !== granularity) return false;
         const dDate = new Date(d.date);
         return dDate >= start && dDate <= end;
     }});
     
-    filtered.sort((a, b) => new Date(a.date) - new Date(b.date));
-    updateChart(filtered, granularity, start, end);
-    updateTable(filtered);
+    updateChart(tableState.data, granularity, start, end);
+    applyTableState();
+}}
+
+function applyTableState() {{
+    const {{ typeFilter, sortCol, sortDir, pageSize, currentPage }} = tableState;
+    
+    // 1. Filter
+    tableState.displayData = tableState.data.filter(d => 
+        typeFilter === 'all' || d.type === typeFilter
+    );
+    
+    // 2. Sort
+    tableState.displayData.sort((a, b) => {{
+        let valA = a[sortCol];
+        let valB = b[sortCol];
+        if (sortCol === 'date') {{
+            valA = new Date(valA);
+            valB = new Date(valB);
+        }}
+        if (valA < valB) return sortDir === 'asc' ? -1 : 1;
+        if (valA > valB) return sortDir === 'asc' ? 1 : -1;
+        return 0;
+    }});
+    
+    renderTable();
+}}
+
+function renderTable() {{
+    const tbody = document.getElementById('energy-table-body');
+    const {{ pageSize, currentPage, displayData }} = tableState;
+    
+    const totalEntries = displayData.length;
+    const totalPages = Math.ceil(totalEntries / pageSize) || 1;
+    const normalizedPage = Math.min(currentPage, totalPages);
+    tableState.currentPage = normalizedPage;
+    
+    const startIdx = (normalizedPage - 1) * pageSize;
+    const endIdx = Math.min(startIdx + pageSize, totalEntries);
+    const splitData = displayData.slice(startIdx, endIdx);
+    
+    tbody.innerHTML = splitData.map(d => `
+        <tr>
+            <td><span class="badge ${{d.type === 'historical' ? 'bg-secondary' : 'bg-primary'}}">${{d.type.charAt(0).toUpperCase() + d.type.slice(1)}}</span></td>
+            <td><strong>$${{d.val.toFixed(d.for === 'hourly' ? 4 : 2)}}</strong></td>
+            <td class="text-muted small">${{d.date}}</td>
+        </tr>
+    `).join('');
+    
+    if (displayData.length === 0) {{
+        tbody.innerHTML = '<tr><td colspan="3" class="text-center text-muted py-4">No data available for this selection</td></tr>';
+    }}
+    
+    // Update Pagination UI
+    document.getElementById('pagination-info').innerText = totalEntries > 0 
+        ? `Showing ${{startIdx + 1}} to ${{endIdx}} of ${{totalEntries}} entries`
+        : `Showing 0 to 0 of 0 entries`;
+        
+    const pagList = document.getElementById('pagination-list');
+    pagList.innerHTML = '';
+    
+    // Prev
+    const prevLi = document.createElement('li');
+    prevLi.className = `page-item ${{normalizedPage === 1 ? 'disabled' : ''}}`;
+    prevLi.innerHTML = `<a class="page-link" href="#" onclick="changePage(${{normalizedPage - 1}})">Previous</a>`;
+    pagList.appendChild(prevLi);
+    
+    // Pages (Show 5 around current)
+    for (let i = 1; i <= totalPages; i++) {{
+        if (totalPages > 5) {{
+            if (i > normalizedPage + 2 || i < normalizedPage - 2) continue;
+        }}
+        const li = document.createElement('li');
+        li.className = `page-item ${{i === normalizedPage ? 'active' : ''}}`;
+        li.innerHTML = `<a class="page-link" href="#" onclick="changePage(${{i}})">${{i}}</a>`;
+        pagList.appendChild(li);
+    }}
+    
+    // Next
+    const nextLi = document.createElement('li');
+    nextLi.className = `page-item ${{normalizedPage === totalPages || totalEntries === 0 ? 'disabled' : ''}}`;
+    nextLi.innerHTML = `<a class="page-link" href="#" onclick="changePage(${{normalizedPage + 1}})">Next</a>`;
+    pagList.appendChild(nextLi);
+}}
+
+function changePage(p) {{
+    if (p < 1) return;
+    tableState.currentPage = p;
+    renderTable();
+}}
+
+function handleSort(col) {{
+    if (tableState.sortCol === col) {{
+        tableState.sortDir = tableState.sortDir === 'asc' ? 'desc' : 'asc';
+    }} else {{
+        tableState.sortCol = col;
+        tableState.sortDir = 'asc';
+    }}
+    
+    // Update Header Icons
+    document.querySelectorAll('th.sortable').forEach(th => th.classList.remove('asc', 'desc'));
+    const activeTh = document.getElementById(`sort-${{col === 'val' ? 'cost' : 'time'}}`);
+    activeTh.classList.add(tableState.sortDir);
+    
+    applyTableState();
 }}
 
 function updateChart(data, granularity, start, end) {{
@@ -398,20 +542,20 @@ function updateChart(data, granularity, start, end) {{
     Plotly.newPlot(container, traces, layout, {{responsive: true}});
 }}
 
-function updateTable(data) {{
-    const tbody = document.getElementById('energy-table-body');
-    if (!tbody) return;
-    tbody.innerHTML = [...data].reverse().map(d => `
-        <tr>
-            <td><span class="badge ${{d.type === 'historical' ? 'bg-secondary' : 'bg-primary'}}">${{d.type.charAt(0).toUpperCase() + d.type.slice(1)}}</span></td>
-            <td><strong>$${{d.val.toFixed(d.for === 'hourly' ? 4 : 2)}}</strong></td>
-            <td class="text-muted small">${{d.date}}</td>
-        </tr>
-    `).join('');
-    if (data.length === 0) {{
-        tbody.innerHTML = '<tr><td colspan="3" class="text-center text-muted py-4">No data available for this selection</td></tr>';
-    }}
-}}
+// Event Listeners
+document.getElementById('table-type-filter').addEventListener('change', (e) => {{
+    tableState.typeFilter = e.target.value;
+    applyTableState();
+}});
+
+document.getElementById('table-page-size').addEventListener('change', (e) => {{
+    tableState.pageSize = parseInt(e.target.value);
+    applyTableState();
+}});
+
+document.querySelectorAll('th.sortable').forEach(th => {{
+    th.addEventListener('click', () => handleSort(th.dataset.sort));
+}});
 
 // Initialize flatpickr
 fp = flatpickr('#date-range', {{ 
