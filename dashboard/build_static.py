@@ -180,7 +180,7 @@ def build():
     html_parts = [
         "<html>",
         "<head>",
-        "<title>Residential Energy Spending: History & Predictions</title>",
+        "<title>California Residential Energy Spending: History & Predictions</title>",
         "<link rel='stylesheet' href='https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css'>",
         "<link rel='stylesheet' href='https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css'>",
         "<script src='https://cdn.plot.ly/plotly-latest.min.js'></script>",
@@ -286,46 +286,76 @@ def build():
 </div>
 """)
 
+        # Extract valid dates for flatpickr enable list
+    # We want dates that actually have any data for the current granularity
+    # But flatpickr 'enable' is better as a global list of dates that have entries
+    all_valid_dates = sorted(list(set([d["date"].split(' ')[0] for d in unified_data])))
+
     # Unified Dashboard Script (Historical + Predictions)
     html_parts.append(f"""
 <script>
 const allData = {json.dumps(unified_data)};
+const validDates = {json.dumps(all_valid_dates)};
+let fp; // Flatpickr instance
 
 function updateView() {{
     const granularityIdx = document.getElementById('granularity');
     if (!granularityIdx) return;
     const granularity = granularityIdx.value;
-    const dateRangeStr = document.getElementById('date-range').value;
+    const selectedDateStr = document.getElementById('date-range').value;
     
-    let filtered = allData.filter(d => d.for === granularity);
+    if (!selectedDateStr) return;
     
-    if (dateRangeStr && dateRangeStr.includes(' to ')) {{
-        const [start, end] = dateRangeStr.split(' to ');
-        const startDate = new Date(start);
-        const endDate = new Date(end);
-        endDate.setHours(23, 59, 59);
+    const selectedDate = new Date(selectedDateStr + 'T00:00:00');
+    let start, end;
+
+    if (granularity === 'hourly') {{
+        // Show the specific day
+        start = new Date(selectedDate);
+        end = new Date(selectedDate);
+        end.setHours(23, 59, 59);
+    }} else if (granularity === 'daily') {{
+        // Show the week (Mon-Sun)
+        start = new Date(selectedDate);
+        const day = start.getDay();
+        const diff = start.getDate() - day + (day === 0 ? -6 : 1); // adjust when day is sunday
+        start.setDate(diff);
+        start.setHours(0,0,0,0);
         
-        filtered = filtered.filter(d => {{
-            const dDate = new Date(d.date);
-            return dDate >= startDate && dDate <= endDate;
-        }});
+        end = new Date(start);
+        end.setDate(start.getDate() + 6);
+        end.setHours(23, 59, 59);
+    }} else if (granularity === 'weekly') {{
+        // Show the month
+        start = new Date(selectedDate.getFullYear(), selectedDate.getMonth(), 1);
+        end = new Date(selectedDate.getFullYear(), selectedDate.getMonth() + 1, 0);
+        end.setHours(23, 59, 59);
+    }} else if (granularity === 'monthly') {{
+        // Show the year
+        start = new Date(selectedDate.getFullYear(), 0, 1);
+        end = new Date(selectedDate.getFullYear(), 11, 31);
+        end.setHours(23, 59, 59);
     }}
+
+    let filtered = allData.filter(d => {{
+        if (d.for !== granularity) return false;
+        const dDate = new Date(d.date);
+        return dDate >= start && dDate <= end;
+    }});
     
     filtered.sort((a, b) => new Date(a.date) - new Date(b.date));
-    updateChart(filtered, granularity);
+    updateChart(filtered, granularity, start, end);
     updateTable(filtered);
 }}
 
-function updateChart(data, granularity) {{
+function updateChart(data, granularity, start, end) {{
     const container = document.getElementById('energy-chart-container');
     if (!container) return;
-    if (data.length === 0) {{
-        container.innerHTML = '<p class="text-muted">No data available for the selected period.</p>';
-        return;
-    }}
+    
     const hist = data.filter(d => d.type === 'historical');
     const pred = data.filter(d => d.type === 'prediction');
     const traces = [];
+    
     if (hist.length > 0) {{
         traces.push({{
             x: hist.map(d => d.date),
@@ -337,6 +367,7 @@ function updateChart(data, granularity) {{
             marker: {{ size: 6 }}
         }});
     }}
+    
     if (pred.length > 0) {{
         traces.push({{
             x: pred.map(d => d.date),
@@ -348,14 +379,22 @@ function updateChart(data, granularity) {{
             marker: {{ size: 8 }}
         }});
     }}
+    
+    const titleDate = start.toLocaleDateString(undefined, {{ 
+        year: 'numeric', 
+        month: granularity === 'monthly' ? undefined : 'short', 
+        day: (granularity === 'hourly' || granularity === 'daily') ? 'numeric' : undefined 
+    }});
+
     const layout = {{
-        title: `${{granularity.charAt(0).toUpperCase() + granularity.slice(1)}} Energy Spending`,
+        title: `${{granularity.charAt(0).toUpperCase() + granularity.slice(1)}} Spending (${{titleDate}}${{granularity !== 'hourly' ? ' context' : ''}})`,
         xaxis: {{ title: 'Time' }},
         yaxis: {{ title: 'Cost (USD)' }},
         margin: {{ t: 40, b: 40, l: 60, r: 20 }},
         height: 450,
         legend: {{ orientation: 'h', y: -0.2 }}
     }};
+    
     Plotly.newPlot(container, traces, layout, {{responsive: true}});
 }}
 
@@ -369,9 +408,20 @@ function updateTable(data) {{
             <td class="text-muted small">${{d.date}}</td>
         </tr>
     `).join('');
+    if (data.length === 0) {{
+        tbody.innerHTML = '<tr><td colspan="3" class="text-center text-muted py-4">No data available for this selection</td></tr>';
+    }}
 }}
 
-flatpickr('#date-range', {{ mode: 'range', dateFormat: 'Y-m-d', onChange: updateView }});
+// Initialize flatpickr
+fp = flatpickr('#date-range', {{ 
+    mode: 'single', 
+    dateFormat: 'Y-m-d', 
+    enable: validDates,
+    defaultDate: validDates[validDates.length - 1],
+    onChange: updateView 
+}});
+
 document.getElementById('granularity').addEventListener('change', updateView);
 
 // Navigation Logic
