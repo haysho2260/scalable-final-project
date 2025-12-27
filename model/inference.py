@@ -562,21 +562,26 @@ def run_inference():
     current_day = now.replace(hour=0, minute=0, second=0, microsecond=0)
     current_month = datetime(now.year, now.month, 1)
 
-    # Limit predictions to reasonable windows to avoid long runtimes
-    # Only predict next 7 days of hourly, 30 days of daily, 12 months of monthly
-    max_pred_hour = last_hourly_timestamp + timedelta(days=7)
-    max_pred_day = last_daily_date + timedelta(days=30)
-    max_pred_week = pd.to_datetime(weekly["week_start"].iloc[-1]) + timedelta(weeks=12)
-    max_pred_month = last_monthly_date + DateOffset(months=12)
+    # Limit predictions to reach current day + 1 month
+    # Started from Sept 30, we need ~120 days to reach late Jan 2026
+    target_future = now + timedelta(days=31)
+    target_future_hour = target_future.replace(minute=0, second=0, microsecond=0)
+    target_future_day = target_future.replace(hour=0, minute=0, second=0, microsecond=0)
+    target_future_month = datetime(target_future.year, target_future.month, 1)
+
+    max_pred_hour = last_hourly_timestamp + timedelta(days=150)
+    max_pred_day = last_daily_date + timedelta(days=180)
+    max_pred_week = pd.to_datetime(weekly["week_start"].iloc[-1]) + timedelta(weeks=32)
+    max_pred_month = last_monthly_date + DateOffset(months=18)
 
     # Use the earlier of: current time or max prediction window
-    pred_hour_limit = min(pd.to_datetime(current_hour),
+    pred_hour_limit = min(pd.to_datetime(target_future_hour),
                           pd.to_datetime(max_pred_hour))
-    pred_day_limit = min(pd.to_datetime(current_day),
+    pred_day_limit = min(pd.to_datetime(target_future_day),
                          pd.to_datetime(max_pred_day))
-    pred_week_limit = min(pd.to_datetime(current_day),
+    pred_week_limit = min(pd.to_datetime(target_future_day),
                           pd.to_datetime(max_pred_week))
-    pred_month_limit = min(pd.to_datetime(current_month),
+    pred_month_limit = min(pd.to_datetime(target_future_month),
                            pd.to_datetime(max_pred_month))
 
     # Generate predictions for all periods from last data to current time (or limit)
@@ -586,7 +591,7 @@ def run_inference():
     if last_hourly_timestamp < pred_hour_limit:
         hourly_df = hourly_sorted.rename(columns={"timestamp": "date"})
         current_pred_hour = last_hourly_timestamp + timedelta(hours=1)
-        max_hours = 168  # Max 7 days of hourly predictions (24 * 7)
+        max_hours = 3600  # Max 150 days of hourly predictions (24 * 150)
         hour_count = 0
         hourly_new_rows_buffer = []  # Use separate list instead of DataFrame attribute
 
@@ -631,7 +636,7 @@ def run_inference():
     if last_daily_date < pred_day_limit:
         daily_df = daily.rename(columns={"date": "date"})
         current_pred_day = last_daily_date + timedelta(days=1)
-        max_days = 30  # Max 30 days of daily predictions
+        max_days = 180  # Max 180 days of daily predictions
         day_count = 0
         daily_new_rows_buffer = []  # Use separate list instead of DataFrame attribute
 
@@ -675,7 +680,7 @@ def run_inference():
     if last_weekly_date < pred_week_limit:
         weekly_df = weekly.rename(columns={"week_start": "date"})
         current_pred_week = last_weekly_date + timedelta(weeks=1)
-        max_weeks = 12  # Max 12 weeks of weekly predictions
+        max_weeks = 32  # Max 32 weeks of weekly predictions
         week_count = 0
 
         print(

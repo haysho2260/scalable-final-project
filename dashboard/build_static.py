@@ -147,7 +147,7 @@ def build():
     if not monthly.empty:
         for _, row in monthly.iterrows():
             unified_data.append({
-                "date": pd.to_datetime(row["year_month_start"]).strftime("%Y-%m"),
+                "date": pd.to_datetime(row["year_month_start"]).strftime("%Y-%m-%d"),
                 "val": float(row["Estimated_Hourly_Cost_USD"]),
                 "for": "monthly",
                 "type": "historical"
@@ -166,7 +166,7 @@ def build():
             
             # Format date based on granularity for consistency
             d_val = row["feature_date"]
-            if g == "monthly": d_str = d_val.strftime("%Y-%m")
+            if g == "monthly": d_str = d_val.strftime("%Y-%m-%d")
             elif g == "hourly": d_str = d_val.strftime("%Y-%m-%d %H:%M:%S")
             else: d_str = d_val.strftime("%Y-%m-%d")
             
@@ -314,7 +314,7 @@ def build():
             <h2 class="h4 mb-3">Motivation</h2>
             <p>Southern California experiences some of the highest electricity demand in the United States due to a combination of factors such as widespread air-conditioning use, a growing number of electric vehicles, and increasing residential and commercial energy consumption. During hot summer months, cooling loads drive peak demand in the late afternoon and evening, while electric vehicle charging and household activities further elevate nighttime consumption. These demand patterns often lead to periods of high electricity prices, even when consumers are unaware of the cost differences throughout the day.</p>
             
-            <p>At the same time, many energy-intensive activities - such as EV charging, running laundry, or operating large appliances - can be shifted to hours when electricity is cheaper. Identifying these "optimal usage windows" has the potential to reduce household energy bills, ease stress on the electric grid, and support more efficient use of renewable generation.</p>
+            <p>At the same time, many energy-intensive activities—such as EV charging, running laundry, or operating large appliances—can be shifted to hours when electricity is cheaper. Identifying these “optimal usage windows” has the potential to reduce household energy bills, ease stress on the electric grid, and support more efficient use of renewable generation.</p>
             
             <p>However, hourly electricity prices are not always publicly available for Southern California, and consumers rarely have access to clear or actionable guidance about when electricity is most affordable. This project addresses this gap by estimating hourly electricity costs using available demand, generation, and weather data, and by forecasting prices for the next day. With these predictions, the system provides users with intuitive recommendations about the best times to use electricity.</p>
             
@@ -349,7 +349,7 @@ function updateView() {{
     const granularityIdx = document.getElementById('granularity');
     if (!granularityIdx) return;
     const granularity = granularityIdx.value;
-    const selectedDateStr = document.getElementById('date-range').value;
+    const selectedDateStr = document.getElementById('date-range').value || (fp ? fp.formatDate(fp.selectedDates[0], 'Y-m-d') : '');
     
     if (!selectedDateStr) return;
     
@@ -379,18 +379,22 @@ function updateView() {{
         end.setHours(23, 59, 59);
     }}
 
-    tableState.data = allData.filter(d => {{
+    // Chart still uses windowed data
+    const chartData = allData.filter(d => {{
         if (d.for !== granularity) return false;
         const dDate = new Date(d.date);
         return dDate >= start && dDate <= end;
     }});
     
-    updateChart(tableState.data, granularity, start, end);
-    applyTableState();
+    // Table shows all data for this granularity
+    tableState.data = allData.filter(d => d.for === granularity);
+    
+    updateChart(chartData, granularity, start, end);
+    applyTableState(selectedDateStr);
 }}
 
-function applyTableState() {{
-    const {{ typeFilter, sortCol, sortDir, pageSize, currentPage }} = tableState;
+function applyTableState(targetDateStr) {{
+    const {{ typeFilter, sortCol, sortDir, pageSize }} = tableState;
     
     // 1. Filter
     tableState.displayData = tableState.data.filter(d => 
@@ -409,6 +413,18 @@ function applyTableState() {{
         if (valA > valB) return sortDir === 'asc' ? 1 : -1;
         return 0;
     }});
+    
+    // 3. Auto-navigate to target date if provided
+    if (targetDateStr) {{
+        const idx = tableState.displayData.findIndex(d => {{
+            if (d.for === 'hourly') return d.date.startsWith(targetDateStr);
+            if (d.for === 'monthly') return d.date.slice(0, 7) === targetDateStr.slice(0, 7);
+            return d.date === targetDateStr;
+        }});
+        if (idx !== -1) {{
+            tableState.currentPage = Math.floor(idx / pageSize) + 1;
+        }}
+    }}
     
     renderTable();
 }}
@@ -565,6 +581,9 @@ fp = flatpickr('#date-range', {{
     defaultDate: validDates[validDates.length - 1],
     onChange: updateView 
 }});
+
+// Initial call
+updateView();
 
 document.getElementById('granularity').addEventListener('change', updateView);
 
