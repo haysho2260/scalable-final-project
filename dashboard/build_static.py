@@ -252,8 +252,9 @@ def build():
     ]
 
     # Unified Dashboard Section
+    html_parts.append("<div id='section-dashboard'>")
     html_parts.append(
-        "<div class='card mb-3'><div class='card-header fw-semibold'>Energy Spending: History & Predictions</div><div class='card-body'>"
+        "<div class='card mb-3'><div class='card-header fw-semibold text-primary'>Energy Spending: History & Predictions</div><div class='card-body'>"
     )
     
     # Add containers for chart and table
@@ -264,118 +265,15 @@ def build():
     html_parts.append("<tbody id='energy-table-body'></tbody>")
     html_parts.append("</table></div>")
     html_parts.append("</div></div>")
-
-    # JavaScript logic for unified view
-    html_parts.append(f"""
-<script>
-const allData = {json.dumps(unified_data)};
-
-function updateView() {{
-    const granularity = document.getElementById('granularity').value;
-    const dateRangeStr = document.getElementById('date-range').value;
-    
-    let filtered = allData.filter(d => d.for === granularity);
-    
-    if (dateRangeStr && dateRangeStr.includes(' to ')) {{
-        const [start, end] = dateRangeStr.split(' to ');
-        const startDate = new Date(start);
-        const endDate = new Date(end);
-        endDate.setHours(23, 59, 59); // Include end of day
-        
-        filtered = filtered.filter(d => {{
-            const dDate = new Date(d.date);
-            return dDate >= startDate && dDate <= endDate;
-        }});
-    }}
-    
-    // Sort by date
-    filtered.sort((a, b) => new Date(a.date) - new Date(b.date));
-    
-    updateChart(filtered, granularity);
-    updateTable(filtered);
-}}
-
-function updateChart(data, granularity) {{
-    const container = document.getElementById('energy-chart-container');
-    if (!container) return;
-    
-    if (data.length === 0) {{
-        container.innerHTML = '<p class=\"text-muted\">No data available for the selected period.</p>';
-        return;
-    }}
-    
-    const hist = data.filter(d => d.type === 'historical');
-    const pred = data.filter(d => d.type === 'prediction');
-    
-    const traces = [];
-    
-    if (hist.length > 0) {{
-        traces.push({{
-            x: hist.map(d => d.date),
-            y: hist.map(d => d.val),
-            type: 'scatter',
-            mode: 'lines+markers',
-            name: 'Historical Cost',
-            line: {{ color: '#64748b', width: 2 }},
-            marker: {{ size: 6 }}
-        }});
-    }}
-    
-    if (pred.length > 0) {{
-        traces.push({{
-            x: pred.map(d => d.date),
-            y: pred.map(d => d.val),
-            type: 'scatter',
-            mode: 'lines+markers',
-            name: 'Predicted Cost',
-            line: {{ color: '#3b82f6', width: 3, dash: 'dash' }},
-            marker: {{ size: 8 }}
-        }});
-    }}
-    
-    const layout = {{
-        title: `${{granularity.charAt(0).toUpperCase() + granularity.slice(1)}} Energy Spending`,
-        xaxis: {{ title: 'Time' }},
-        yaxis: {{ title: 'Cost (USD)' }},
-        margin: {{ t: 40, b: 40, l: 60, r: 20 }},
-        height: 450,
-        legend: {{ orientation: 'h', y: -0.2 }}
-    }};
-    
-    Plotly.newPlot(container, traces, layout, {{responsive: true}});
-}}
-
-function updateTable(data) {{
-    const tbody = document.getElementById('energy-table-body');
-    if (!tbody) return;
-    
-    tbody.innerHTML = data.reverse().map(d => `
-        <tr>
-            <td><span class="badge ${{d.type === 'historical' ? 'bg-secondary' : 'bg-primary'}}">${{d.type.charAt(0).toUpperCase() + d.type.slice(1)}}</span></td>
-            <td><strong>$${{d.val.toFixed(d.for === 'hourly' ? 4 : 2)}}</strong></td>
-            <td class="text-muted small">${{d.date}}</td>
-        </tr>
-    `).join('');
-}}
-
-// Initialize flatpickr
-flatpickr('#date-range', {{
-    mode: 'range',
-    dateFormat: 'Y-m-d',
-    onChange: updateView
-}});
-
-document.getElementById('granularity').addEventListener('change', updateView);
-
     html_parts.append("</div>") # End section-dashboard
     
     # About Section
     html_parts.append(f"""
 <div id='section-about' class='section-hidden'>
     <div class='card mb-3'>
-        <div class='card-header fw-semibold'>About This Project</div>
+        <div class='card-header fw-semibold text-primary'>About This Project</div>
         <div class='card-body about-content'>
-            <h2>Motivation</h2>
+            <h2 class="h4 mb-3">Motivation</h2>
             <p>Southern California experiences some of the highest electricity demand in the United States due to a combination of factors such as widespread air-conditioning use, a growing number of electric vehicles, and increasing residential and commercial energy consumption. During hot summer months, cooling loads drive peak demand in the late afternoon and evening, while electric vehicle charging and household activities further elevate nighttime consumption. These demand patterns often lead to periods of high electricity prices, even when consumers are unaware of the cost differences throughout the day.</p>
             
             <p>At the same time, many energy-intensive activities - such as EV charging, running laundry, or operating large appliances - can be shifted to hours when electricity is cheaper. Identifying these "optimal usage windows" has the potential to reduce household energy bills, ease stress on the electric grid, and support more efficient use of renewable generation.</p>
@@ -422,7 +320,7 @@ function updateChart(data, granularity) {{
     const container = document.getElementById('energy-chart-container');
     if (!container) return;
     if (data.length === 0) {{
-        container.innerHTML = '<p class=\"text-muted\">No data available for the selected period.</p>';
+        container.innerHTML = '<p class="text-muted">No data available for the selected period.</p>';
         return;
     }}
     const hist = data.filter(d => d.type === 'historical');
@@ -501,8 +399,8 @@ document.getElementById('granularity').addEventListener('change', updateView);
         }}
     }}
 
-    navDashboard.addEventListener('click', () => switchSection('dashboard'));
-    navAbout.addEventListener('click', () => switchSection('about'));
+    if (navDashboard) navDashboard.addEventListener('click', () => switchSection('dashboard'));
+    if (navAbout) navAbout.addEventListener('click', () => switchSection('about'));
     
     updateView();
 }})();
