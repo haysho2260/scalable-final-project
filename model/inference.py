@@ -128,6 +128,7 @@ def _predict_next(
     next_label: str,
     freq: str = "D",
     target_date: pd.Timestamp | None = None,
+    max_hist_date: pd.Timestamp | None = None,
 ) -> pd.DataFrame:
     df = df.sort_values(date_col)
     if df.empty:
@@ -178,12 +179,18 @@ def _predict_next(
 
     # OPTIMIZATION: Pre-compute date components for faster filtering
     # Cache date components to avoid repeated dt access
-    if '_cached_month' not in df.columns:
-        df['_cached_month'] = df_dates.dt.month
-    if '_cached_dayofweek' not in df.columns:
-        df['_cached_dayofweek'] = df_dates.dt.dayofweek
-    if freq.upper().startswith("H") and '_cached_hour' not in df.columns:
-        df['_cached_hour'] = df_dates.dt.hour if 'hour' not in df.columns else df['hour']
+    # Isolate TRUE history from recursively generated predictions for feature anchoring
+    if max_hist_date is not None:
+        history_df = df[df_dates <= pd.to_datetime(max_hist_date)].copy()
+    else:
+        history_df = df.copy()
+    
+    # Pre-compute date components on history for filtering
+    hist_dates = pd.to_datetime(history_df[date_col], errors="coerce")
+    history_df['_cached_month'] = hist_dates.dt.month
+    history_df['_cached_dayofweek'] = hist_dates.dt.dayofweek
+    if freq.upper().startswith("H"):
+        history_df['_cached_hour'] = hist_dates.dt.hour
 
     # Find similar historical periods to use as a base
     # For daily: same day of week, same month (from previous years)
@@ -192,23 +199,23 @@ def _predict_next(
 
     if freq.upper().startswith("M"):
         # Monthly: find same month from previous years
-        similar_mask = df['_cached_month'] == next_month
-        similar_rows = df[similar_mask]
+        similar_mask = history_df['_cached_month'] == next_month
+        similar_rows = history_df[similar_mask]
     elif freq.upper().startswith("H"):
         # Hourly: find same hour of day, same day of week, same month from history
         similar_mask = (
-            (df['_cached_month'] == next_month) &
-            (df['_cached_dayofweek'] == next_dayofweek) &
-            (df['_cached_hour'] == next_hour)
+            (history_df['_cached_month'] == next_month) &
+            (history_df['_cached_dayofweek'] == next_dayofweek) &
+            (history_df['_cached_hour'] == next_hour)
         )
-        similar_rows = df[similar_mask]
+        similar_rows = history_df[similar_mask]
     else:
         # Daily: find same day of week and same month from history
         similar_mask = (
-            (df['_cached_month'] == next_month) &
-            (df['_cached_dayofweek'] == next_dayofweek)
+            (history_df['_cached_month'] == next_month) &
+            (history_df['_cached_dayofweek'] == next_dayofweek)
         )
-        similar_rows = df[similar_mask]
+        similar_rows = history_df[similar_mask]
 
     # Use the most recent similar row, or fall back to last row
     if not similar_rows.empty:
@@ -608,6 +615,7 @@ def run_inference():
                 f"hour_{current_pred_hour.strftime('%Y-%m-%d %H:00')}",
                 freq="H",
                 target_date=current_pred_hour,
+                max_hist_date=last_hourly_timestamp,
             )
             all_predictions.append(pred)
 
@@ -653,6 +661,7 @@ def run_inference():
                 f"day_{current_pred_day.strftime('%Y-%m-%d')}",
                 freq="D",
                 target_date=current_pred_day,
+                max_hist_date=last_daily_date,
             )
             all_predictions.append(pred)
 
@@ -695,6 +704,7 @@ def run_inference():
                 f"week_{current_pred_week.strftime('%Y-%m-%d')}",
                 freq="W",
                 target_date=current_pred_week,
+                max_hist_date=last_daily_date, # Weekly uses daily data as base
             )
             all_predictions.append(pred)
 
@@ -727,6 +737,7 @@ def run_inference():
                 f"month_{current_pred_month.strftime('%Y-%m')}",
                 freq="M",
                 target_date=current_pred_month,
+                max_hist_date=last_monthly_date,
             )
             all_predictions.append(pred)
 

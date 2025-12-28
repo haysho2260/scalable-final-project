@@ -136,8 +136,16 @@ def build():
         daily["week_start"] = daily["date_dt"] - pd.to_timedelta(daily["date_dt"].dt.dayofweek, unit="d")
         weekly = daily.groupby("week_start")["Estimated_Hourly_Cost_USD"].sum().reset_index()
         for _, row in weekly.iterrows():
+            week_start = row["week_start"]
+            week_end = week_start + pd.Timedelta(days=6)
+            # Format as "Jan 1-7, 2025" or "Dec 29 - Jan 4, 2025" if spanning months
+            if week_start.month == week_end.month:
+                date_str = week_start.strftime("%b %d") + "-" + week_end.strftime("%d, %Y")
+            else:
+                date_str = week_start.strftime("%b %d") + " - " + week_end.strftime("%b %d, %Y")
             unified_data.append({
-                "date": row["week_start"].strftime("%Y-%m-%d"),
+                "date": week_start.strftime("%Y-%m-%d"),  # Keep ISO format for sorting/filtering
+                "date_display": date_str,  # Human-readable format
                 "val": float(row["Estimated_Hourly_Cost_USD"]),
                 "for": "weekly",
                 "type": "historical"
@@ -146,8 +154,12 @@ def build():
     # Monthly
     if not monthly.empty:
         for _, row in monthly.iterrows():
+            month_date = pd.to_datetime(row["year_month_start"])
+            # Format as "January 2025" or "Jan 2025"
+            date_str = month_date.strftime("%B %Y")  # Full month name
             unified_data.append({
-                "date": pd.to_datetime(row["year_month_start"]).strftime("%Y-%m-%d"),
+                "date": month_date.strftime("%Y-%m-%d"),  # Keep ISO format for sorting/filtering
+                "date_display": date_str,  # Human-readable format
                 "val": float(row["Estimated_Hourly_Cost_USD"]),
                 "for": "monthly",
                 "type": "historical"
@@ -166,12 +178,28 @@ def build():
             
             # Format date based on granularity for consistency
             d_val = row["feature_date"]
-            if g == "monthly": d_str = d_val.strftime("%Y-%m-%d")
-            elif g == "hourly": d_str = d_val.strftime("%Y-%m-%d %H:%M:%S")
-            else: d_str = d_val.strftime("%Y-%m-%d")
+            if g == "monthly": 
+                d_str = d_val.strftime("%Y-%m-%d")
+                date_display = d_val.strftime("%B %Y")  # "January 2025"
+            elif g == "hourly": 
+                d_str = d_val.strftime("%Y-%m-%d %H:%M:%S")
+                date_display = d_str
+            elif g == "weekly":
+                # Calculate week range
+                week_start = d_val - pd.Timedelta(days=d_val.dayofweek)
+                week_end = week_start + pd.Timedelta(days=6)
+                d_str = week_start.strftime("%Y-%m-%d")
+                if week_start.month == week_end.month:
+                    date_display = week_start.strftime("%b %d") + "-" + week_end.strftime("%d, %Y")
+                else:
+                    date_display = week_start.strftime("%b %d") + " - " + week_end.strftime("%b %d, %Y")
+            else: 
+                d_str = d_val.strftime("%Y-%m-%d")
+                date_display = d_str
             
             unified_data.append({
                 "date": d_str,
+                "date_display": date_display,
                 "val": float(row["prediction"]),
                 "for": g,
                 "type": "prediction"
@@ -442,13 +470,17 @@ function renderTable() {{
     const endIdx = Math.min(startIdx + pageSize, totalEntries);
     const splitData = displayData.slice(startIdx, endIdx);
     
-    tbody.innerHTML = splitData.map(d => `
+    tbody.innerHTML = splitData.map(d => {{
+        // Use date_display if available, otherwise fall back to date
+        const displayDate = d.date_display || d.date;
+        return `
         <tr>
             <td><span class="badge ${{d.type === 'historical' ? 'bg-secondary' : 'bg-primary'}}">${{d.type.charAt(0).toUpperCase() + d.type.slice(1)}}</span></td>
             <td><strong>$${{d.val.toFixed(d.for === 'hourly' ? 4 : 2)}}</strong></td>
-            <td class="text-muted small">${{d.date}}</td>
+            <td class="text-muted small">${{displayDate}}</td>
         </tr>
-    `).join('');
+        `;
+    }}).join('');
     
     if (displayData.length === 0) {{
         tbody.innerHTML = '<tr><td colspan="3" class="text-center text-muted py-4">No data available for this selection</td></tr>';
@@ -518,25 +550,27 @@ function updateChart(data, granularity, start, end) {{
     
     if (hist.length > 0) {{
         traces.push({{
-            x: hist.map(d => d.date),
+            x: hist.map(d => d.date_display || d.date),
             y: hist.map(d => d.val),
             type: 'scatter',
             mode: 'lines+markers',
             name: 'Historical Cost',
             line: {{ color: '#64748b', width: 2 }},
-            marker: {{ size: 6 }}
+            marker: {{ size: 6 }},
+            hovertemplate: '<b>%{{x}}</b><br>Cost: $%{{y:.2f}}<extra></extra>'
         }});
     }}
     
     if (pred.length > 0) {{
         traces.push({{
-            x: pred.map(d => d.date),
+            x: pred.map(d => d.date_display || d.date),
             y: pred.map(d => d.val),
             type: 'scatter',
             mode: 'lines+markers',
             name: 'Predicted Cost',
             line: {{ color: '#3b82f6', width: 3, dash: 'dash' }},
-            marker: {{ size: 8 }}
+            marker: {{ size: 8 }},
+            hovertemplate: '<b>%{{x}}</b><br>Cost: $%{{y:.2f}}<extra></extra>'
         }});
     }}
     
