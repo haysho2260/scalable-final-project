@@ -113,8 +113,13 @@ def build():
     # Hourly
     if not hourly.empty:
         for _, row in hourly.iterrows():
+            ts = row["timestamp"]
             unified_data.append({
-                "date": row["timestamp"].strftime("%Y-%m-%d %H:%M:%S"),
+                "date": ts.strftime("%Y-%m-%d %H:%M:%S"),
+                "year": int(ts.year),
+                "month": ts.strftime("%B"),  # Full month name
+                "day": int(ts.day),
+                "hour": int(ts.hour),
                 "val": float(row["Estimated_Hourly_Cost_USD"]),
                 "for": "hourly",
                 "type": "historical"
@@ -123,8 +128,12 @@ def build():
     # Daily
     if not daily.empty:
         for _, row in daily.iterrows():
+            dt = pd.to_datetime(row["date"])
             unified_data.append({
-                "date": pd.to_datetime(row["date"]).strftime("%Y-%m-%d"),
+                "date": dt.strftime("%Y-%m-%d"),
+                "year": int(dt.year),
+                "month": dt.strftime("%B"),  # Full month name
+                "day": int(dt.day),
                 "val": float(row["Estimated_Hourly_Cost_USD"]),
                 "for": "daily",
                 "type": "historical"
@@ -146,6 +155,8 @@ def build():
             unified_data.append({
                 "date": week_start.strftime("%Y-%m-%d"),  # Keep ISO format for sorting/filtering
                 "date_display": date_str,  # Human-readable format
+                "year": int(week_start.year),
+                "month": week_start.strftime("%B"),  # Full month name
                 "val": float(row["Estimated_Hourly_Cost_USD"]),
                 "for": "weekly",
                 "type": "historical"
@@ -160,6 +171,8 @@ def build():
             unified_data.append({
                 "date": month_date.strftime("%Y-%m-%d"),  # Keep ISO format for sorting/filtering
                 "date_display": date_str,  # Human-readable format
+                "year": int(month_date.year),
+                "month": month_date.strftime("%B"),  # Full month name
                 "val": float(row["Estimated_Hourly_Cost_USD"]),
                 "for": "monthly",
                 "type": "historical"
@@ -181,9 +194,29 @@ def build():
             if g == "monthly": 
                 d_str = d_val.strftime("%Y-%m-%d")
                 date_display = d_val.strftime("%B %Y")  # "January 2025"
+                unified_data.append({
+                    "date": d_str,
+                    "date_display": date_display,
+                    "year": int(d_val.year),
+                    "month": d_val.strftime("%B"),  # Full month name
+                    "val": float(row["prediction"]),
+                    "for": g,
+                    "type": "prediction"
+                })
             elif g == "hourly": 
                 d_str = d_val.strftime("%Y-%m-%d %H:%M:%S")
                 date_display = d_str
+                unified_data.append({
+                    "date": d_str,
+                    "date_display": date_display,
+                    "year": int(d_val.year),
+                    "month": d_val.strftime("%B"),  # Full month name
+                    "day": int(d_val.day),
+                    "hour": int(d_val.hour),
+                    "val": float(row["prediction"]),
+                    "for": g,
+                    "type": "prediction"
+                })
             elif g == "weekly":
                 # Calculate week range
                 week_start = d_val - pd.Timedelta(days=d_val.dayofweek)
@@ -193,17 +226,28 @@ def build():
                     date_display = week_start.strftime("%b %d") + "-" + week_end.strftime("%d, %Y")
                 else:
                     date_display = week_start.strftime("%b %d") + " - " + week_end.strftime("%b %d, %Y")
+                unified_data.append({
+                    "date": d_str,
+                    "date_display": date_display,
+                    "year": int(week_start.year),
+                    "month": week_start.strftime("%B"),  # Full month name
+                    "val": float(row["prediction"]),
+                    "for": g,
+                    "type": "prediction"
+                })
             else: 
                 d_str = d_val.strftime("%Y-%m-%d")
                 date_display = d_str
-            
-            unified_data.append({
-                "date": d_str,
-                "date_display": date_display,
-                "val": float(row["prediction"]),
-                "for": g,
-                "type": "prediction"
-            })
+                unified_data.append({
+                    "date": d_str,
+                    "date_display": date_display,
+                    "year": int(d_val.year),
+                    "month": d_val.strftime("%B"),  # Full month name
+                    "day": int(d_val.day),
+                    "val": float(row["prediction"]),
+                    "for": g,
+                    "type": "prediction"
+                })
 
     html_parts = [
         "<html>",
@@ -316,7 +360,10 @@ def build():
         "                        <tr>",
         "                            <th>Type</th>",
         "                            <th class='sortable' data-sort='val' id='sort-cost'>Cost</th>",
-        "                            <th class='sortable' data-sort='date' id='sort-time'>Time</th>",
+        "                            <th class='sortable date-col' data-sort='year' id='col-year' style='display:none;'>Year</th>",
+        "                            <th class='sortable date-col' data-sort='month' id='col-month' style='display:none;'>Month</th>",
+        "                            <th class='sortable date-col' data-sort='day' id='col-day' style='display:none;'>Day</th>",
+        "                            <th class='sortable date-col' data-sort='hour' id='col-hour' style='display:none;'>Hour</th>",
         "                        </tr>",
         "                    </thead>",
         "                    <tbody id='energy-table-body'></tbody>",
@@ -436,6 +483,12 @@ function applyTableState(targetDateStr) {{
         if (sortCol === 'date') {{
             valA = new Date(valA);
             valB = new Date(valB);
+        }} else if (sortCol === 'month') {{
+            // Sort months by their numeric value
+            const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 
+                              'July', 'August', 'September', 'October', 'November', 'December'];
+            valA = monthNames.indexOf(valA || '');
+            valB = monthNames.indexOf(valB || '');
         }}
         if (valA < valB) return sortDir === 'asc' ? -1 : 1;
         if (valA > valB) return sortDir === 'asc' ? 1 : -1;
@@ -457,9 +510,43 @@ function applyTableState(targetDateStr) {{
     renderTable();
 }}
 
+function updateTableColumns(granularity) {{
+    // Show/hide columns based on granularity
+    const yearCol = document.getElementById('col-year');
+    const monthCol = document.getElementById('col-month');
+    const dayCol = document.getElementById('col-day');
+    const hourCol = document.getElementById('col-hour');
+    
+    if (granularity === 'hourly') {{
+        yearCol.style.display = '';
+        monthCol.style.display = '';
+        dayCol.style.display = '';
+        hourCol.style.display = '';
+    }} else if (granularity === 'daily') {{
+        yearCol.style.display = '';
+        monthCol.style.display = '';
+        dayCol.style.display = '';
+        hourCol.style.display = 'none';
+    }} else if (granularity === 'weekly') {{
+        yearCol.style.display = '';
+        monthCol.style.display = '';
+        dayCol.style.display = 'none';
+        hourCol.style.display = 'none';
+    }} else if (granularity === 'monthly') {{
+        yearCol.style.display = '';
+        monthCol.style.display = '';
+        dayCol.style.display = 'none';
+        hourCol.style.display = 'none';
+    }}
+}}
+
 function renderTable() {{
     const tbody = document.getElementById('energy-table-body');
     const {{ pageSize, currentPage, displayData }} = tableState;
+    
+    // Get current granularity from the select
+    const granularity = document.getElementById('granularity')?.value || 'monthly';
+    updateTableColumns(granularity);
     
     const totalEntries = displayData.length;
     const totalPages = Math.ceil(totalEntries / pageSize) || 1;
@@ -471,19 +558,42 @@ function renderTable() {{
     const splitData = displayData.slice(startIdx, endIdx);
     
     tbody.innerHTML = splitData.map(d => {{
-        // Use date_display if available, otherwise fall back to date
-        const displayDate = d.date_display || d.date;
-        return `
-        <tr>
+        const year = d.year || '';
+        const month = d.month || '';
+        const day = d.day !== undefined ? d.day : '';
+        const hour = d.hour !== undefined ? d.hour : '';
+        
+        let cells = `
             <td><span class="badge ${{d.type === 'historical' ? 'bg-secondary' : 'bg-primary'}}">${{d.type.charAt(0).toUpperCase() + d.type.slice(1)}}</span></td>
             <td><strong>$${{d.val.toFixed(d.for === 'hourly' ? 4 : 2)}}</strong></td>
-            <td class="text-muted small">${{displayDate}}</td>
-        </tr>
         `;
+        
+        if (granularity === 'hourly') {{
+            cells += `
+                <td class="text-muted small">${{year}}</td>
+                <td class="text-muted small">${{month}}</td>
+                <td class="text-muted small">${{day}}</td>
+                <td class="text-muted small">${{hour}}</td>
+            `;
+        }} else if (granularity === 'daily') {{
+            cells += `
+                <td class="text-muted small">${{year}}</td>
+                <td class="text-muted small">${{month}}</td>
+                <td class="text-muted small">${{day}}</td>
+            `;
+        }} else if (granularity === 'weekly' || granularity === 'monthly') {{
+            cells += `
+                <td class="text-muted small">${{year}}</td>
+                <td class="text-muted small">${{month}}</td>
+            `;
+        }}
+        
+        return `<tr>${{cells}}</tr>`;
     }}).join('');
     
     if (displayData.length === 0) {{
-        tbody.innerHTML = '<tr><td colspan="3" class="text-center text-muted py-4">No data available for this selection</td></tr>';
+        const colCount = granularity === 'hourly' ? 6 : granularity === 'daily' ? 5 : 4;
+        tbody.innerHTML = `<tr><td colspan="${{colCount}}" class="text-center text-muted py-4">No data available for this selection</td></tr>`;
     }}
     
     // Update Pagination UI
@@ -534,8 +644,19 @@ function handleSort(col) {{
     
     // Update Header Icons
     document.querySelectorAll('th.sortable').forEach(th => th.classList.remove('asc', 'desc'));
-    const activeTh = document.getElementById(`sort-${{col === 'val' ? 'cost' : 'time'}}`);
-    activeTh.classList.add(tableState.sortDir);
+    let activeTh;
+    if (col === 'val') {{
+        activeTh = document.getElementById('sort-cost');
+    }} else if (col === 'year') {{
+        activeTh = document.getElementById('col-year');
+    }} else if (col === 'month') {{
+        activeTh = document.getElementById('col-month');
+    }} else if (col === 'day') {{
+        activeTh = document.getElementById('col-day');
+    }} else if (col === 'hour') {{
+        activeTh = document.getElementById('col-hour');
+    }}
+    if (activeTh) activeTh.classList.add(tableState.sortDir);
     
     applyTableState();
 }}
