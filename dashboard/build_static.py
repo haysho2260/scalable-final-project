@@ -328,7 +328,17 @@ def build():
         "<main class='col-md-9 col-lg-10 py-3'>",
         "<div id='section-dashboard'>",
         "    <div class='card mb-3'>",
-        "        <div class='card-header fw-semibold text-primary'>Visual Trends</div>",
+        "        <div class='card-header fw-semibold text-primary d-flex justify-content-between align-items-center'>",
+        "            <span>Visual Trends</span>",
+        "            <div class='btn-group btn-group-sm' role='group'>",
+        "                <button type='button' class='btn btn-outline-primary' id='chart-prev-btn' title='Previous period'>",
+        "                    <svg xmlns='http://www.w3.org/2000/svg' width='16' height='16' fill='currentColor' class='bi bi-chevron-left' viewBox='0 0 16 16'><path fill-rule='evenodd' d='M11.354 1.646a.5.5 0 0 1 0 .708L5.707 8l5.647 5.646a.5.5 0 0 1-.708.708l-6-6a.5.5 0 0 1 0-.708l6-6a.5.5 0 0 1 .708 0z'/></svg>",
+        "                </button>",
+        "                <button type='button' class='btn btn-outline-primary' id='chart-next-btn' title='Next period'>",
+        "                    <svg xmlns='http://www.w3.org/2000/svg' width='16' height='16' fill='currentColor' class='bi bi-chevron-right' viewBox='0 0 16 16'><path fill-rule='evenodd' d='M4.646 1.646a.5.5 0 0 1 .708 0l6 6a.5.5 0 0 1 0 .708l-6 6a.5.5 0 0 1-.708-.708L10.293 8 4.646 2.354a.5.5 0 0 1 0-.708z'/></svg>",
+        "                </button>",
+        "            </div>",
+        "        </div>",
         "        <div class='card-body'>",
         "            <div id='energy-chart-container' class='mb-4'></div>",
         "        </div>",
@@ -457,8 +467,15 @@ function updateView() {{
     // Chart still uses windowed data
     const chartData = allData.filter(d => {{
         if (d.for !== granularity) return false;
-        const dDate = new Date(d.date);
-        return dDate >= start && dDate <= end;
+        if (granularity === 'monthly') {{
+            // For monthly, compare by year only
+            const dDate = new Date(d.date);
+            const dYear = dDate.getFullYear();
+            return dYear === selectedDate.getFullYear();
+        }} else {{
+            const dDate = new Date(d.date);
+            return dDate >= start && dDate <= end;
+        }}
     }});
     
     // Table shows all data for this granularity
@@ -700,8 +717,8 @@ function updateChart(data, granularity, start, end) {{
         month: granularity === 'monthly' ? undefined : 'short', 
         day: (granularity === 'hourly' || granularity === 'daily') ? 'numeric' : undefined 
     }});
-
-    const layout = {{
+                
+                const layout = {{
         title: `${{granularity.charAt(0).toUpperCase() + granularity.slice(1)}} Spending (${{titleDate}}${{granularity !== 'hourly' ? ' context' : ''}})`,
         xaxis: {{ title: 'Time' }},
         yaxis: {{ title: 'Cost (USD)' }},
@@ -711,6 +728,54 @@ function updateChart(data, granularity, start, end) {{
     }};
     
     Plotly.newPlot(container, traces, layout, {{responsive: true}});
+}}
+
+function navigateChart(direction) {{
+    const granularity = document.getElementById('granularity')?.value || 'monthly';
+    const currentDateStr = document.getElementById('date-range').value || (fp ? fp.formatDate(fp.selectedDates[0], 'Y-m-d') : '');
+    if (!currentDateStr) return;
+    
+    const currentDate = new Date(currentDateStr + 'T00:00:00');
+    let newDate = new Date(currentDate);
+    
+    // Navigate based on granularity
+    if (granularity === 'hourly') {{
+        newDate.setDate(currentDate.getDate() + (direction === 'next' ? 1 : -1));
+    }} else if (granularity === 'daily') {{
+        // Navigate by week
+        newDate.setDate(currentDate.getDate() + (direction === 'next' ? 7 : -7));
+    }} else if (granularity === 'weekly') {{
+        // Navigate by month
+        newDate.setMonth(currentDate.getMonth() + (direction === 'next' ? 1 : -1));
+    }} else if (granularity === 'monthly') {{
+        // Navigate by year
+        newDate.setFullYear(currentDate.getFullYear() + (direction === 'next' ? 1 : -1));
+    }}
+    
+    // Format new date and check if it's valid
+    const newDateStr = newDate.toISOString().split('T')[0];
+    
+    // Find the closest valid date
+    let targetDate = newDateStr;
+    if (!validDates.includes(newDateStr)) {{
+        // Find closest valid date
+        const sortedDates = [...validDates].sort();
+        if (direction === 'next') {{
+            targetDate = sortedDates.find(d => d > newDateStr) || sortedDates[sortedDates.length - 1];
+        }} else {{
+            const reversedDates = [...sortedDates].reverse();
+            targetDate = reversedDates.find(d => d < newDateStr) || sortedDates[0];
+        }}
+    }}
+    
+    // Update date picker and view
+    if (fp) {{
+        fp.setDate(targetDate, false); // false = don't trigger onChange
+        updateView(); // Manually trigger updateView
+    }} else {{
+        document.getElementById('date-range').value = targetDate;
+        updateView();
+    }}
 }}
 
 // Event Listeners
@@ -727,6 +792,10 @@ document.getElementById('table-page-size').addEventListener('change', (e) => {{
 document.querySelectorAll('th.sortable').forEach(th => {{
     th.addEventListener('click', () => handleSort(th.dataset.sort));
 }});
+
+// Chart navigation buttons
+document.getElementById('chart-prev-btn').addEventListener('click', () => navigateChart('prev'));
+document.getElementById('chart-next-btn').addEventListener('click', () => navigateChart('next'));
 
 // Initialize flatpickr
 fp = flatpickr('#date-range', {{ 
@@ -779,12 +848,12 @@ document.getElementById('granularity').addEventListener('change', updateView);
     html_parts.append("""
 <script>
   (function() {
-      const sidebarToggle = document.getElementById('sidebar-toggle');
-      const sidebar = document.getElementById('sidebar');
-      const sidebarOverlay = document.getElementById('sidebar-overlay');
+  const sidebarToggle = document.getElementById('sidebar-toggle');
+  const sidebar = document.getElementById('sidebar');
+  const sidebarOverlay = document.getElementById('sidebar-overlay');
       const mainContent = document.querySelector('main');
-      
-      function toggleSidebar() {
+  
+  function toggleSidebar() {
         const isHidden = sidebar.classList.toggle('hidden');
         if (window.innerWidth >= 768) {
           if (isHidden) {
@@ -793,27 +862,27 @@ document.getElementById('granularity').addEventListener('change', updateView);
             mainContent.classList.remove('full-width');
           }
         } else {
-          sidebarOverlay.classList.toggle('show');
-        }
-      }
-      
+      sidebarOverlay.classList.toggle('show');
+    }
+  }
+  
       if (sidebarToggle) sidebarToggle.addEventListener('click', toggleSidebar);
       if (sidebarOverlay) sidebarOverlay.addEventListener('click', toggleSidebar);
       
-      function updateSidebarState() {
-        if (window.innerWidth >= 768) {
-          sidebar.classList.remove('hidden');
+  function updateSidebarState() {
+    if (window.innerWidth >= 768) {
+      sidebar.classList.remove('hidden');
           mainContent.classList.remove('full-width');
-          if (sidebarOverlay) sidebarOverlay.classList.remove('show');
-        } else {
-          sidebar.classList.add('hidden');
+      if (sidebarOverlay) sidebarOverlay.classList.remove('show');
+    } else {
+      sidebar.classList.add('hidden');
           mainContent.classList.add('full-width');
-          if (sidebarOverlay) sidebarOverlay.classList.remove('show');
-        }
-      }
-      
-      updateSidebarState();
-      window.addEventListener('resize', updateSidebarState);
+      if (sidebarOverlay) sidebarOverlay.classList.remove('show');
+    }
+  }
+  
+  updateSidebarState();
+  window.addEventListener('resize', updateSidebarState);
   })();
 </script>
 """)
