@@ -303,6 +303,23 @@ def build():
         ".btn:disabled, .btn.disabled { opacity: 0.5; cursor: not-allowed; pointer-events: none; }",
         ".flatpickr-day.disabled, .flatpickr-day.not-allowed { opacity: 0.3; cursor: not-allowed; }",
         ".flatpickr-day.disabled:hover, .flatpickr-day.not-allowed:hover { background: transparent; }",
+        ".chatbot-container { position: fixed; bottom: 20px; right: 20px; width: 380px; max-height: 600px; z-index: 1000; box-shadow: 0 4px 12px rgba(0,0,0,0.15); border-radius: 12px; overflow: hidden; background: white; display: none; }",
+        ".chatbot-container.open { display: flex; flex-direction: column; }",
+        ".chatbot-header { background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%); color: white; padding: 1rem; display: flex; justify-content: space-between; align-items: center; cursor: pointer; }",
+        ".chatbot-header h6 { margin: 0; font-weight: 600; }",
+        ".chatbot-body { flex: 1; overflow-y: auto; padding: 1rem; background: #f8f9fa; max-height: 450px; }",
+        ".chatbot-message { margin-bottom: 1rem; padding: 0.75rem; border-radius: 8px; }",
+        ".chatbot-message.user { background: #e3f2fd; margin-left: 2rem; }",
+        ".chatbot-message.assistant { background: white; margin-right: 2rem; border-left: 3px solid #3b82f6; }",
+        ".chatbot-input-container { padding: 1rem; background: white; border-top: 1px solid #e5e7eb; display: flex; gap: 0.5rem; }",
+        ".chatbot-input { flex: 1; border: 1px solid #d1d5db; border-radius: 6px; padding: 0.5rem; font-size: 0.9rem; }",
+        ".chatbot-toggle { position: fixed; bottom: 20px; right: 20px; width: 60px; height: 60px; border-radius: 50%; background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%); color: white; border: none; box-shadow: 0 4px 12px rgba(59, 130, 246, 0.4); cursor: pointer; z-index: 999; display: flex; align-items: center; justify-content: center; font-size: 1.5rem; transition: transform 0.2s; }",
+        ".chatbot-toggle:hover { transform: scale(1.1); }",
+        ".chatbot-toggle.hidden { display: none; }",
+        ".recommendation-badge { display: inline-block; padding: 0.25rem 0.5rem; border-radius: 4px; font-size: 0.75rem; font-weight: 600; margin-left: 0.5rem; }",
+        ".recommendation-badge.best { background: #10b981; color: white; }",
+        ".recommendation-badge.good { background: #3b82f6; color: white; }",
+        ".recommendation-badge.avoid { background: #ef4444; color: white; }",
         "</style>",
         "</head>",
         "<body>",
@@ -406,6 +423,12 @@ def build():
         "            </div>",
         "        </div>",
         "    </div>",
+        "    <div class='card mb-3'>",
+        "        <div class='card-header fw-semibold text-primary'>Energy Usage Recommendations</div>",
+        "        <div class='card-body'>",
+        "            <div id='recommendations-container'></div>",
+        "        </div>",
+        "    </div>",
         "</div>",
     ]
 
@@ -504,6 +527,11 @@ function updateView() {{
     updateChart(chartData, granularity, start, end);
     applyTableState(selectedDateStr);
     updateNavigationButtons();
+    
+    // Trigger chatbot recommendations if available
+    if (window.chatbotGenerateRecommendations) {{
+        setTimeout(() => window.chatbotGenerateRecommendations(), 1000);
+    }}
 }}
 
 function applyTableState(targetDateStr) {{
@@ -1118,7 +1146,228 @@ updateView();
 </script>
 """)
 
-    html_parts.append("</main></div></div></body></html>")
+    # Chatbot component
+    html_parts.append("""
+    <!-- Chatbot Toggle Button -->
+    <button class="chatbot-toggle" id="chatbot-toggle" title="Get energy usage recommendations">
+        💬
+    </button>
+    
+    <!-- Chatbot Container -->
+    <div class="chatbot-container" id="chatbot-container">
+        <div class="chatbot-header" id="chatbot-header">
+            <h6>Energy Usage Assistant</h6>
+            <span id="chatbot-close" style="cursor: pointer; font-size: 1.2rem;">×</span>
+        </div>
+        <div class="chatbot-body" id="chatbot-messages">
+            <div class="chatbot-message assistant">
+                <strong>Assistant:</strong> Hi! I'm your energy usage assistant. I analyze predictions and historical data to help you save money. Ask me about the best times to use electricity, or I can automatically analyze today's data for you.
+            </div>
+        </div>
+        <div class="chatbot-input-container">
+            <input type="text" class="chatbot-input" id="chatbot-input" placeholder="Ask about energy usage..." />
+            <button class="btn btn-primary btn-sm" id="chatbot-send">Send</button>
+        </div>
+    </div>
+    </main></div></div>
+    
+    <script>
+    // Chatbot functionality
+    (function() {
+        const chatbotToggle = document.getElementById('chatbot-toggle');
+        const chatbotContainer = document.getElementById('chatbot-container');
+        const chatbotClose = document.getElementById('chatbot-close');
+        const chatbotInput = document.getElementById('chatbot-input');
+        const chatbotSend = document.getElementById('chatbot-send');
+        const chatbotMessages = document.getElementById('chatbot-messages');
+        
+        function toggleChatbot() {
+            chatbotContainer.classList.toggle('open');
+            chatbotToggle.classList.toggle('hidden');
+            if (chatbotContainer.classList.contains('open')) {
+                chatbotInput.focus();
+            }
+        }
+        
+        chatbotToggle.addEventListener('click', toggleChatbot);
+        chatbotClose.addEventListener('click', toggleChatbot);
+        
+        function addMessage(text, isUser = false) {
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `chatbot-message ${isUser ? 'user' : 'assistant'}`;
+            messageDiv.innerHTML = `<strong>${isUser ? 'You' : 'Assistant'}:</strong> ${text}`;
+            chatbotMessages.appendChild(messageDiv);
+            chatbotMessages.scrollTop = chatbotMessages.scrollHeight;
+        }
+        
+        function generateRecommendations(data) {
+            if (!data || data.length === 0) {
+                return "I don't have enough data to provide recommendations. Please select a granularity with available data.";
+            }
+            
+            const predictions = data.filter(d => d.type === 'prediction');
+            const historical = data.filter(d => d.type === 'historical');
+            
+            if (predictions.length === 0 && historical.length === 0) {
+                return "No data available for analysis.";
+            }
+            
+            let recommendations = [];
+            
+            // Analyze hourly data for best times
+            const hourlyData = data.filter(d => d.for === 'hourly');
+            if (hourlyData.length > 0) {
+                const hourlyPreds = hourlyData.filter(d => d.type === 'prediction');
+                if (hourlyPreds.length > 0) {
+                    // Find cheapest and most expensive hours
+                    const sortedByCost = [...hourlyPreds].sort((a, b) => a.val - b.val);
+                    const cheapestHours = sortedByCost.slice(0, 5);
+                    const expensiveHours = sortedByCost.slice(-5).reverse();
+                    
+                    if (cheapestHours.length > 0) {
+                        const avgCheap = cheapestHours.reduce((sum, d) => sum + d.val, 0) / cheapestHours.length;
+                        const avgExpensive = expensiveHours.reduce((sum, d) => sum + d.val, 0) / expensiveHours.length;
+                        const savings = ((avgExpensive - avgCheap) / avgExpensive * 100).toFixed(1);
+                        
+                        recommendations.push(`<strong>Best Hours to Use Electricity:</strong><br>`);
+                        recommendations.push(`The cheapest hours are: ${cheapestHours.map(d => {
+                            const date = new Date(d.date);
+                            return date.toLocaleTimeString('en-US', { hour: 'numeric', hour12: true });
+                        }).join(', ')}<br>`);
+                        recommendations.push(`Average cost: $${avgCheap.toFixed(4)}/hour<br>`);
+                        recommendations.push(`<strong>Avoid these expensive hours:</strong> ${expensiveHours.slice(0, 3).map(d => {
+                            const date = new Date(d.date);
+                            return date.toLocaleTimeString('en-US', { hour: 'numeric', hour12: true });
+                        }).join(', ')} ($${avgExpensive.toFixed(4)}/hour)<br>`);
+                        recommendations.push(`<span class="recommendation-badge best">Potential Savings: ${savings}%</span><br><br>`);
+                    }
+                }
+            }
+            
+            // Analyze daily patterns
+            const dailyData = data.filter(d => d.for === 'daily');
+            if (dailyData.length > 0) {
+                const dailyPreds = dailyData.filter(d => d.type === 'prediction');
+                if (dailyPreds.length > 0) {
+                    const sortedDaily = [...dailyPreds].sort((a, b) => a.val - b.val);
+                    const cheapestDay = sortedDaily[0];
+                    const expensiveDay = sortedDaily[sortedDaily.length - 1];
+                    
+                    if (cheapestDay && expensiveDay) {
+                        const date1 = new Date(cheapestDay.date);
+                        const date2 = new Date(expensiveDay.date);
+                        recommendations.push(`<strong>Daily Recommendations:</strong><br>`);
+                        recommendations.push(`Best day: ${date1.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })} - $${cheapestDay.val.toFixed(2)}<br>`);
+                        recommendations.push(`Most expensive day: ${date2.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })} - $${expensiveDay.val.toFixed(2)}<br><br>`);
+                    }
+                }
+            }
+            
+            // Analyze weekly patterns
+            const weeklyData = data.filter(d => d.for === 'weekly');
+            if (weeklyData.length > 0) {
+                const weeklyPreds = weeklyData.filter(d => d.type === 'prediction');
+                if (weeklyPreds.length > 0) {
+                    const avgWeekly = weeklyPreds.reduce((sum, d) => sum + d.val, 0) / weeklyPreds.length;
+                    recommendations.push(`<strong>Weekly Outlook:</strong><br>`);
+                    recommendations.push(`Average weekly cost: $${avgWeekly.toFixed(2)}<br>`);
+                    recommendations.push(`Plan major energy-intensive tasks (laundry, EV charging) during cheaper weeks.<br><br>`);
+                }
+            }
+            
+            // Monthly insights
+            const monthlyData = data.filter(d => d.for === 'monthly');
+            if (monthlyData.length > 0) {
+                const monthlyPreds = monthlyData.filter(d => d.type === 'prediction');
+                if (monthlyPreds.length > 0) {
+                    const sortedMonthly = [...monthlyPreds].sort((a, b) => a.val - b.val);
+                    recommendations.push(`<strong>Monthly Insights:</strong><br>`);
+                    recommendations.push(`Upcoming months show ${sortedMonthly.length > 1 ? 'varying' : 'consistent'} costs.<br>`);
+                    if (sortedMonthly.length > 1) {
+                        const cheapestMonth = sortedMonthly[0];
+                        const date = new Date(cheapestMonth.date);
+                        recommendations.push(`Best month: ${date.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })} - $${cheapestMonth.val.toFixed(2)}<br>`);
+                    }
+                }
+            }
+            
+            // General tips
+            recommendations.push(`<strong>💡 Tips:</strong><br>`);
+            recommendations.push(`• Schedule EV charging during off-peak hours (typically late night/early morning)<br>`);
+            recommendations.push(`• Run dishwashers and washing machines during cheaper hours<br>`);
+            recommendations.push(`• Pre-cool your home before peak hours in summer<br>`);
+            recommendations.push(`• Use timers for major appliances to take advantage of lower rates<br>`);
+            
+            return recommendations.join('');
+        }
+        
+        function handleChatbotQuery(query) {
+            const lowerQuery = query.toLowerCase();
+            
+            // Get current data - use allData if available, otherwise try dataCache
+            const granularity = document.getElementById('granularity')?.value || 'monthly';
+            let currentData = [];
+            if (typeof allData !== 'undefined' && allData.length > 0) {
+                currentData = allData.filter(d => d.for === granularity);
+            } else if (typeof dataCache !== 'undefined' && dataCache[granularity]) {
+                currentData = dataCache[granularity];
+            }
+            
+            if (lowerQuery.includes('best time') || lowerQuery.includes('cheapest') || lowerQuery.includes('when should')) {
+                if (currentData.length === 0) {
+                    addMessage("Please select a granularity first to load data, then ask again.");
+                    return;
+                }
+                const recommendations = generateRecommendations(currentData);
+                addMessage(recommendations);
+            } else if (lowerQuery.includes('analyze') || lowerQuery.includes('recommend') || lowerQuery.includes('suggest')) {
+                if (currentData.length === 0) {
+                    addMessage("Please select a granularity first to load data, then ask again.");
+                    return;
+                }
+                const recommendations = generateRecommendations(currentData);
+                addMessage(recommendations);
+            } else if (lowerQuery.includes('hello') || lowerQuery.includes('hi') || lowerQuery === '') {
+                addMessage("Hello! I can help you find the best times to use electricity based on predictions and historical data. Try asking: 'What are the best times to use electricity?' or 'Analyze today's data'");
+            } else {
+                addMessage("I can help you with energy usage recommendations. Try asking: 'What are the best times to use electricity?' or 'Analyze the current data for recommendations'");
+            }
+        }
+        
+        chatbotSend.addEventListener('click', () => {
+            const query = chatbotInput.value.trim();
+            if (query) {
+                addMessage(query, true);
+                chatbotInput.value = '';
+                setTimeout(() => handleChatbotQuery(query), 500);
+            }
+        });
+        
+        chatbotInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                chatbotSend.click();
+            }
+        });
+        
+        // Function to generate recommendations when data is available
+        window.chatbotGenerateRecommendations = function() {
+            if (chatbotContainer.classList.contains('open')) {
+                const granularity = document.getElementById('granularity')?.value || 'monthly';
+                let currentData = [];
+                if (typeof allData !== 'undefined' && allData.length > 0) {
+                    currentData = allData.filter(d => d.for === granularity);
+                } else if (typeof dataCache !== 'undefined' && dataCache[granularity]) {
+                    currentData = dataCache[granularity];
+                }
+                if (currentData.length > 0) {
+                    const recommendations = generateRecommendations(currentData);
+                    addMessage(`<strong>Automatic Analysis:</strong><br>${recommendations}`);
+                }
+            }
+        };
+    })();
+    </script>
+    </body></html>""")
     out_path = SITE_DIR / "index.html"
     out_path.write_text("\n".join(html_parts), encoding="utf-8")
     return out_path
