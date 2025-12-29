@@ -508,7 +508,7 @@ function updateView() {{
     }}
 
     // Chart still uses windowed data
-    const chartData = allData.filter(d => {{
+    let chartData = allData.filter(d => {{
         if (d.for !== granularity) return false;
         if (granularity === 'monthly') {{
             // For monthly, compare by year only
@@ -520,6 +520,42 @@ function updateView() {{
             return dDate >= start && dDate <= end;
         }}
     }});
+    
+    // For monthly/yearly view: if only one month of data for the selected year,
+    // include the previous 2 months for context
+    if (granularity === 'monthly' && chartData.length > 0) {{
+        const monthsInYear = chartData.filter(d => {{
+            const dDate = new Date(d.date);
+            return dDate.getFullYear() === selectedDate.getFullYear();
+        }});
+        
+        // Count unique months in the selected year
+        const uniqueMonths = new Set(monthsInYear.map(d => {{
+            const dDate = new Date(d.date);
+            return `${dDate.getFullYear()}-${String(dDate.getMonth() + 1).padStart(2, '0')}`;
+        }}));
+        
+        // If only one month in the selected year, add previous 2 months
+        if (uniqueMonths.size === 1) {{
+            const selectedYear = selectedDate.getFullYear();
+            const prevYear = selectedYear - 1;
+            
+            // Get previous 2 months (November and December of previous year)
+            const prevMonths = allData.filter(d => {{
+                if (d.for !== 'monthly') return false;
+                const dDate = new Date(d.date);
+                const dYear = dDate.getFullYear();
+                const dMonth = dDate.getMonth() + 1; // 1-12
+                // Include November (11) and December (12) of previous year
+                return dYear === prevYear && (dMonth === 11 || dMonth === 12);
+            }});
+            
+            // Combine previous months with current year data, sorted by date
+            chartData = [...prevMonths, ...chartData].sort((a, b) => {{
+                return new Date(a.date) - new Date(b.date);
+            }});
+        }}
+    }}
     
     // Table shows all data for this granularity
     tableState.data = allData.filter(d => d.for === granularity);
