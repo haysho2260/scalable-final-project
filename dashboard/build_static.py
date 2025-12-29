@@ -521,6 +521,26 @@ function updateView() {{
         }}
     }});
     
+    // Remove predictions if historical data exists for the same month
+    if (granularity === 'monthly') {{
+        const monthMap = new Map();
+        // First pass: identify which months have historical data
+        chartData.forEach(d => {{
+            if (d.type === 'historical') {{
+                const monthKey = d.date.substring(0, 7); // YYYY-MM
+                monthMap.set(monthKey, true);
+            }}
+        }});
+        // Second pass: filter out predictions for months that have historical data
+        chartData = chartData.filter(d => {{
+            if (d.type === 'prediction') {{
+                const monthKey = d.date.substring(0, 7); // YYYY-MM
+                return !monthMap.has(monthKey); // Remove prediction if historical exists
+            }}
+            return true; // Keep all historical data
+        }});
+    }}
+    
     // For monthly/yearly view: if only one month of data for the selected year,
     // include the previous 2 months for context
     if (granularity === 'monthly' && chartData.length > 0) {{
@@ -561,7 +581,27 @@ function updateView() {{
     }}
     
     // Table shows all data for this granularity
-    tableState.data = allData.filter(d => d.for === granularity);
+    // For monthly: remove predictions if historical exists for the same month
+    let tableData = allData.filter(d => d.for === granularity);
+    if (granularity === 'monthly') {{
+        const monthMap = new Map();
+        // First pass: identify which months have historical data
+        tableData.forEach(d => {{
+            if (d.type === 'historical') {{
+                const monthKey = d.date.substring(0, 7); // YYYY-MM
+                monthMap.set(monthKey, true);
+            }}
+        }});
+        // Second pass: filter out predictions for months that have historical data
+        tableData = tableData.filter(d => {{
+            if (d.type === 'prediction') {{
+                const monthKey = d.date.substring(0, 7); // YYYY-MM
+                return !monthMap.has(monthKey); // Remove prediction if historical exists
+            }}
+            return true; // Keep all historical data
+        }});
+    }}
+    tableState.data = tableData;
     
     updateChart(chartData, granularity, start, end);
     applyTableState(selectedDateStr);
@@ -778,16 +818,21 @@ function updateChart(data, granularity, start, end) {{
     }});
     
     // For monthly data, handle duplicates: if same month exists in both historical and prediction,
-    // prefer prediction for that month to avoid disconnect
+    // prefer historical over prediction
     let processedData = sortedData;
     if (granularity === 'monthly') {{
         const monthMap = new Map();
-        // First pass: collect all data by month
+        // First pass: collect all data by month, preferring historical
         sortedData.forEach(d => {{
             const monthKey = d.date.substring(0, 7); // YYYY-MM
-            if (!monthMap.has(monthKey) || d.type === 'prediction') {{
+            if (!monthMap.has(monthKey)) {{
+                // No data for this month yet, add it
+                monthMap.set(monthKey, d);
+            }} else if (d.type === 'historical' && monthMap.get(monthKey).type === 'prediction') {{
+                // Historical exists and current map has prediction, replace with historical
                 monthMap.set(monthKey, d);
             }}
+            // If map already has historical, keep it (don't replace with prediction)
         }});
         processedData = Array.from(monthMap.values()).sort((a, b) => {{
             return new Date(a.date) - new Date(b.date);
