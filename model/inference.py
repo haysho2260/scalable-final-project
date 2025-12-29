@@ -577,13 +577,15 @@ def run_inference():
     current_month = datetime(now.year, now.month, 1)
 
     # Limit predictions to reach current day + 1 month
-    # Started from Sept 30, we need ~120 days to reach late Jan 2026
+    # For monthly: include current month + next month (2 months ahead)
     target_future = now + timedelta(days=31)
     target_future_hour = target_future.replace(
         minute=0, second=0, microsecond=0)
     target_future_day = target_future.replace(
         hour=0, minute=0, second=0, microsecond=0)
-    target_future_month = datetime(target_future.year, target_future.month, 1)
+    # For monthly predictions, go 2 months ahead (current + next month)
+    target_future_month = datetime(
+        target_future.year, target_future.month, 1) + DateOffset(months=1)
 
     max_pred_hour = last_hourly_timestamp + timedelta(days=150)
     max_pred_day = last_daily_date + timedelta(days=180)
@@ -728,20 +730,30 @@ def run_inference():
             week_count += 1
 
     # Monthly predictions: from last month + 1 to limit
-    # Also include the last historical month if we're currently in that month (it might be incomplete)
+    # Also include the last historical month if it might be incomplete
     if last_monthly_date < pred_month_limit:
         monthly_df = monthly.rename(columns={"year_month_start": "date"})
 
-        # Check if we're currently in the same month as the last historical month
-        # If so, that month might be incomplete and should be predicted
+        # Check if we should predict the last historical month
+        # Predict it if: 1) we're currently in that month, OR 2) it's before the current month but might be incomplete
         current_month_start = datetime(now.year, now.month, 1)
         last_monthly_dt = pd.to_datetime(last_monthly_date)
+
+        # Check if last historical month is before current month but close (within 3 months)
+        # This handles cases where September might be incomplete
+        months_since_last = (current_month_start.year - last_monthly_dt.year) * \
+            12 + (current_month_start.month - last_monthly_dt.month)
 
         if last_monthly_dt == current_month_start:
             # We're in the same month as last historical, so it's incomplete - predict it
             current_pred_month = last_monthly_dt
             print(
                 f"  Note: Last historical month ({last_monthly_dt.strftime('%Y-%m')}) is current month and may be incomplete, including it in predictions")
+        elif months_since_last <= 3 and last_monthly_dt < current_month_start:
+            # Last historical month is recent but before current - might be incomplete, include it
+            current_pred_month = last_monthly_dt
+            print(
+                f"  Note: Last historical month ({last_monthly_dt.strftime('%Y-%m')}) is recent and may be incomplete, including it in predictions")
         else:
             # Start from the month after the last historical month
             current_pred_month = last_monthly_dt + DateOffset(months=1)
