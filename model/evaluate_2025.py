@@ -29,11 +29,11 @@ FEATURES_DIR = ROOT / "features"
 RESULTS_DIR = ROOT / "results"
 MODEL_DIR = ROOT / "model"
 
-# Import functions from train.py
+# Import functions from train.py and inference.py
 import sys
 sys.path.insert(0, str(ROOT))
-from model.train import build_hourly_dataset, _build_daily_and_monthly
-from model.inference import _predict_next
+from model.train import build_hourly_dataset
+from model.inference import _predict_next, _build_daily_and_monthly
 
 TARGET_COL = "Estimated_Hourly_Cost_USD"
 

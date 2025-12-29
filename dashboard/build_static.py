@@ -606,7 +606,7 @@ def build():
                 eval_data[granularity] = df.to_dict("records")
 
     # Extract year from eval_dir name if available
-    eval_year = "the last complete year"
+    eval_year = None
     if eval_dir:
         try:
             year_part = eval_dir.name.replace("evaluation_", "")
@@ -614,12 +614,20 @@ def build():
         except:
             pass
 
+    # Build header and description based on whether evaluation exists
+    if eval_year:
+        header_text = f"Model Performance Evaluation ({eval_year} Predictions)"
+        description_text = f"This evaluation compares model predictions against actual data for {eval_year}. Models were trained on historical data up to the start of {eval_year} and used to predict {eval_year} values."
+    else:
+        header_text = "Model Performance Evaluation"
+        description_text = "This evaluation compares model predictions against actual data for the last complete year of available data. Models are trained on historical data up to the start of the evaluation year and used to predict values for that year."
+
     html_parts.append(f"""
 <div id='section-evaluations' class='section-hidden'>
     <div class='card mb-3'>
-        <div class='card-header fw-semibold text-primary'>Model Performance Evaluation ({eval_year} Predictions)</div>
+        <div class='card-header fw-semibold text-primary'>{header_text}</div>
         <div class='card-body'>
-            <p class='text-muted mb-4'>This evaluation compares model predictions against actual data for {eval_year}. Models were trained on historical data up to the start of {eval_year} and used to predict {eval_year} values.</p>
+            <p class='text-muted mb-4'>{description_text}</p>
             
             <div id='evaluation-metrics-container'>
                 {_format_evaluation_metrics(eval_metrics) if eval_metrics else '<p class="text-muted">Evaluation results not yet available. Run <code>python model/evaluate_2025.py</code> to generate evaluation metrics.</p>'}
