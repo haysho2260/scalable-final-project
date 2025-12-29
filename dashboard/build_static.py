@@ -29,6 +29,150 @@ def _read_csv(path: Path) -> pd.DataFrame:
     return pd.read_csv(path) if path.exists() else pd.DataFrame()
 
 
+def _format_evaluation_metrics(metrics: dict) -> str:
+    """Format evaluation metrics as HTML."""
+    if not metrics:
+        return ""
+
+    html_parts = []
+    for granularity, metric_data in metrics.items():
+        html_parts.append(f"""
+        <div class='card mb-3'>
+            <div class='card-header fw-semibold'>{granularity.upper()} Model Metrics</div>
+            <div class='card-body'>
+                <div class='row g-3'>
+                    <div class='col-md-3'>
+                        <div class='stat-card'>
+                            <div class='small text-muted mb-1'>Mean Absolute Error</div>
+                            <div class='h5 mb-0'>${metric_data.get('mae', 0):.4f}</div>
+                        </div>
+                    </div>
+                    <div class='col-md-3'>
+                        <div class='stat-card'>
+                            <div class='small text-muted mb-1'>Root Mean Squared Error</div>
+                            <div class='h5 mb-0'>${metric_data.get('rmse', 0):.4f}</div>
+                        </div>
+                    </div>
+                    <div class='col-md-3'>
+                        <div class='stat-card'>
+                            <div class='small text-muted mb-1'>Mean Absolute % Error</div>
+                            <div class='h5 mb-0'>{metric_data.get('mape', 0):.2f}%</div>
+                        </div>
+                    </div>
+                    <div class='col-md-3'>
+                        <div class='stat-card'>
+                            <div class='small text-muted mb-1'>R² Score</div>
+                            <div class='h5 mb-0'>{metric_data.get('r2', 0):.4f}</div>
+                        </div>
+                    </div>
+                    <div class='col-md-6'>
+                        <div class='stat-card'>
+                            <div class='small text-muted mb-1'>Mean Actual Value</div>
+                            <div class='h5 mb-0'>${metric_data.get('mean_actual', 0):.2f}</div>
+                        </div>
+                    </div>
+                    <div class='col-md-6'>
+                        <div class='stat-card'>
+                            <div class='small text-muted mb-1'>Mean Predicted Value</div>
+                            <div class='h5 mb-0'>${metric_data.get('mean_predicted', 0):.2f}</div>
+                        </div>
+                    </div>
+                    <div class='col-12'>
+                        <div class='small text-muted'>
+                            <strong>Sample Size:</strong> {metric_data.get('n_samples', 0)} predictions
+                            <br><strong>Mean Error:</strong> ${metric_data.get('mean_error', 0):.2f}
+                            <br><strong>RMSE as % of Mean:</strong> {metric_data.get('rmse_percentage', 0):.2f}%
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        """)
+
+    return "".join(html_parts)
+
+
+def _format_evaluation_charts(data: dict) -> str:
+    """Format evaluation charts as JavaScript/HTML."""
+    if not data:
+        return ""
+
+    # Convert data to JSON for JavaScript
+    charts_data = {}
+    for granularity, records in data.items():
+        charts_data[granularity] = records
+
+    return f"""
+    <div id='evaluation-charts'>
+        <script>
+        const evaluationData = {json.dumps(charts_data)};
+        
+        function renderEvaluationCharts() {{
+            const container = document.getElementById('evaluation-charts-container');
+            if (!container || !evaluationData) return;
+            
+            Object.keys(evaluationData).forEach(granularity => {{
+                const data = evaluationData[granularity];
+                if (!data || data.length === 0) return;
+                
+                const chartDiv = document.createElement('div');
+                chartDiv.className = 'card mb-3';
+                chartDiv.innerHTML = `
+                    <div class='card-header fw-semibold'>${{granularity.toUpperCase()}} Predictions vs Actual (2025)</div>
+                    <div class='card-body'>
+                        <div id='eval-chart-${{granularity}}' style='height: 400px;'></div>
+                    </div>
+                `;
+                container.appendChild(chartDiv);
+                
+                const dates = data.map(d => d.date);
+                const predictions = data.map(d => parseFloat(d.prediction));
+                const actuals = data.map(d => parseFloat(d.actual));
+                
+                const trace1 = {{
+                    x: dates,
+                    y: actuals,
+                    type: 'scatter',
+                    mode: 'lines+markers',
+                    name: 'Actual',
+                    line: {{ color: '#10b981', width: 2 }},
+                    marker: {{ size: 6 }}
+                }};
+                
+                const trace2 = {{
+                    x: dates,
+                    y: predictions,
+                    type: 'scatter',
+                    mode: 'lines+markers',
+                    name: 'Predicted',
+                    line: {{ color: '#3b82f6', width: 2, dash: 'dash' }},
+                    marker: {{ size: 6 }}
+                }};
+                
+                const layout = {{
+                    title: '${{granularity.toUpperCase()}} Model: Predictions vs Actual Values',
+                    xaxis: {{ title: 'Date' }},
+                    yaxis: {{ title: 'Cost (USD)' }},
+                    height: 400,
+                    legend: {{ orientation: 'h', y: -0.2 }}
+                }};
+                
+                Plotly.newPlot(`eval-chart-${{granularity}}`, [trace1, trace2], layout, {{responsive: true}});
+            }});
+        }}
+        
+        // Render charts when evaluations section is shown
+        const navEvaluations = document.getElementById('nav-evaluations');
+        if (navEvaluations) {{
+            navEvaluations.addEventListener('click', () => {{
+                setTimeout(renderEvaluationCharts, 100);
+            }});
+        }}
+        </script>
+    </div>
+    """
+
+
 def _load_hourly_data() -> pd.DataFrame:
     """Load hourly data from hourly_price files."""
     hourly_files = sorted(
@@ -335,6 +479,7 @@ def build():
         "<h6>Navigation</h6>",
         "<div class='nav flex-column'>",
         "<div class='nav-link active' id='nav-dashboard'>Dashboard</div>",
+        "<div class='nav-link' id='nav-evaluations'>Evaluations</div>",
         "<div class='nav-link' id='nav-about'>About</div>",
         "</div>",
         "</div>",
@@ -431,6 +576,62 @@ def build():
         "    </div>",
         "</div>",
     ]
+
+    # Evaluations Section
+    # Dynamically find the most recent evaluation directory
+    eval_dir = None
+    eval_metrics = {}
+    eval_data = {}
+
+    # Find all evaluation directories (evaluation_YYYY)
+    if RESULTS_DIR.exists():
+        eval_dirs = [d for d in RESULTS_DIR.iterdir()
+                     if d.is_dir() and d.name.startswith("evaluation_")]
+        if eval_dirs:
+            # Sort by directory name (which includes year) and get the most recent
+            eval_dirs.sort(key=lambda x: x.name, reverse=True)
+            eval_dir = eval_dirs[0]
+            print(f"Found evaluation directory: {eval_dir.name}")
+
+    if eval_dir and (eval_dir / "metrics_summary.json").exists():
+        with open(eval_dir / "metrics_summary.json", "r") as f:
+            eval_metrics = json.load(f)
+
+    # Load evaluation prediction vs actual data
+    if eval_dir:
+        for granularity in ["daily", "weekly", "monthly"]:
+            eval_file = eval_dir / f"{granularity}_predictions_vs_actual.csv"
+            if eval_file.exists():
+                df = pd.read_csv(eval_file)
+                eval_data[granularity] = df.to_dict("records")
+
+    # Extract year from eval_dir name if available
+    eval_year = "the last complete year"
+    if eval_dir:
+        try:
+            year_part = eval_dir.name.replace("evaluation_", "")
+            eval_year = year_part
+        except:
+            pass
+
+    html_parts.append(f"""
+<div id='section-evaluations' class='section-hidden'>
+    <div class='card mb-3'>
+        <div class='card-header fw-semibold text-primary'>Model Performance Evaluation ({eval_year} Predictions)</div>
+        <div class='card-body'>
+            <p class='text-muted mb-4'>This evaluation compares model predictions against actual data for {eval_year}. Models were trained on historical data up to the start of {eval_year} and used to predict {eval_year} values.</p>
+            
+            <div id='evaluation-metrics-container'>
+                {_format_evaluation_metrics(eval_metrics) if eval_metrics else '<p class="text-muted">Evaluation results not yet available. Run <code>python model/evaluate_2025.py</code> to generate evaluation metrics.</p>'}
+            </div>
+            
+            <div id='evaluation-charts-container' class='mt-4'>
+                {_format_evaluation_charts(eval_data) if eval_data else ''}
+            </div>
+        </div>
+    </div>
+</div>
+""")
 
     # About Section
     html_parts.append(f"""
@@ -1204,29 +1405,47 @@ updateView();
 // Navigation Logic
 (function() {{
     const navDashboard = document.getElementById('nav-dashboard');
+    const navEvaluations = document.getElementById('nav-evaluations');
     const navAbout = document.getElementById('nav-about');
     const sectionDashboard = document.getElementById('section-dashboard');
+    const sectionEvaluations = document.getElementById('section-evaluations');
     const sectionAbout = document.getElementById('section-about');
     const sidebarFilters = document.getElementById('sidebar-filters');
 
     function switchSection(section) {{
+        // Hide all sections
+        sectionDashboard.classList.add('section-hidden');
+        if (sectionEvaluations) sectionEvaluations.classList.add('section-hidden');
+        sectionAbout.classList.add('section-hidden');
+        
+        // Remove active from all nav items
+        navDashboard.classList.remove('active');
+        if (navEvaluations) navEvaluations.classList.remove('active');
+        navAbout.classList.remove('active');
+        
+        // Show selected section
         if (section === 'dashboard') {{
             sectionDashboard.classList.remove('section-hidden');
-            sectionAbout.classList.add('section-hidden');
             navDashboard.classList.add('active');
-            navAbout.classList.remove('active');
             sidebarFilters.style.display = 'block';
             updateView();
+        }} else if (section === 'evaluations') {{
+            if (sectionEvaluations) sectionEvaluations.classList.remove('section-hidden');
+            if (navEvaluations) navEvaluations.classList.add('active');
+            sidebarFilters.style.display = 'none';
+            // Render evaluation charts when section is shown
+            if (typeof renderEvaluationCharts === 'function') {{
+                setTimeout(renderEvaluationCharts, 100);
+            }}
         }} else {{
-            sectionDashboard.classList.add('section-hidden');
             sectionAbout.classList.remove('section-hidden');
-            navDashboard.classList.remove('active');
             navAbout.classList.add('active');
             sidebarFilters.style.display = 'none';
         }}
     }}
 
     if (navDashboard) navDashboard.addEventListener('click', () => switchSection('dashboard'));
+    if (navEvaluations) navEvaluations.addEventListener('click', () => switchSection('evaluations'));
     if (navAbout) navAbout.addEventListener('click', () => switchSection('about'));
     
     updateView();

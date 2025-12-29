@@ -150,6 +150,11 @@ jobs:
         if: steps.check_models.outputs.models_exist == 'true'
         run: python model/inference.py
 
+      - name: Run model evaluation (2025 backtest)
+        if: steps.check_models.outputs.models_exist == 'true'
+        run: python model/evaluate_2025.py
+        continue-on-error: true
+
       - name: Skip inference message (daily schedule only)
         if: |
           steps.check_models.outputs.models_exist == 'false' &&
