@@ -9,7 +9,7 @@ Results are written to `results/predictions.csv`.
 """
 
 from __future__ import annotations
-
+from model.train import build_hourly_dataset
 
 
 from datetime import timedelta, datetime
@@ -27,7 +27,6 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from model.train import build_hourly_dataset
 
 RESULTS_DIR = ROOT / "results"
 HOURLY_MODEL_PATH = ROOT / "model" / "hourly_spend_model.pkl"
@@ -97,9 +96,10 @@ def _build_daily_and_monthly(hourly: pd.DataFrame) -> tuple[pd.DataFrame, pd.Dat
         .reset_index()
     )
     monthly["year_month_start"] = monthly["year_month"].dt.to_timestamp()
-    
+
     # Weekly aggregation
-    daily["week_start"] = daily["date"] - pd.to_timedelta(daily["date"].dt.dayofweek, unit="d")
+    daily["week_start"] = daily["date"] - \
+        pd.to_timedelta(daily["date"].dt.dayofweek, unit="d")
     weekly = (
         daily.groupby("week_start")
         .agg(
@@ -184,7 +184,7 @@ def _predict_next(
         history_df = df[df_dates <= pd.to_datetime(max_hist_date)].copy()
     else:
         history_df = df.copy()
-    
+
     # Pre-compute date components on history for filtering
     hist_dates = pd.to_datetime(history_df[date_col], errors="coerce")
     history_df['_cached_month'] = hist_dates.dt.month
@@ -471,24 +471,28 @@ def _predict_next(
                         tail_size = min(168, len(df))  # 1 week of hourly data
                     else:
                         tail_size = min(30, len(df))  # 30 days for daily
-                    
+
                     # For critical features, prefer non-zero values
                     if col in critical_features:
                         non_zero_data = df[df[col] > 0][col]
                         if len(non_zero_data) > 0:
-                            recent_val = non_zero_data.iloc[-min(tail_size, len(non_zero_data)):].mean()
+                            recent_val = non_zero_data.iloc[-min(
+                                tail_size, len(non_zero_data)):].mean()
                         else:
-                            recent_val = df[col].iloc[-tail_size:].mean() if tail_size > 0 else df[col].mean()
+                            recent_val = df[col].iloc[-tail_size:].mean(
+                            ) if tail_size > 0 else df[col].mean()
                     else:
-                        recent_val = df[col].iloc[-tail_size:].mean() if tail_size > 0 else df[col].mean()
-                    
+                        recent_val = df[col].iloc[-tail_size:].mean(
+                        ) if tail_size > 0 else df[col].mean()
+
                     if not pd.isna(recent_val) and recent_val != 0:
                         next_row[col] = recent_val
                     else:
                         # Last resort: use overall mean (prefer non-zero)
                         if col in critical_features:
                             non_zero_overall = df[df[col] > 0][col]
-                            overall_mean = non_zero_overall.mean() if len(non_zero_overall) > 0 else df[col].mean()
+                            overall_mean = non_zero_overall.mean() if len(
+                                non_zero_overall) > 0 else df[col].mean()
                         else:
                             overall_mean = df[col].mean()
                         if not pd.isna(overall_mean) and overall_mean != 0:
@@ -506,14 +510,15 @@ def _predict_next(
                 non_zero_caiso = df[df["CAISO Total"] > 0]["CAISO Total"]
                 if len(non_zero_caiso) > 0:
                     # Use last 168 hours of non-zero data, or all if less available
-                    recent_caiso = non_zero_caiso.iloc[-min(168, len(non_zero_caiso)):].mean()
+                    recent_caiso = non_zero_caiso.iloc[-min(
+                        168, len(non_zero_caiso)):].mean()
                     X["CAISO Total"] = recent_caiso
                 else:
                     # Last resort: use overall mean (even if some zeros)
                     recent_caiso = df["CAISO Total"].mean()
                     if recent_caiso > 0:
                         X["CAISO Total"] = recent_caiso
-    
+
     # Debug logging for first few predictions to diagnose issues
     if not hasattr(_predict_next, '_debug_count'):
         _predict_next._debug_count = 0
@@ -521,7 +526,8 @@ def _predict_next(
     if _predict_next._debug_count <= 3:
         caiso_val = X["CAISO Total"].iloc[0] if "CAISO Total" in X.columns else None
         price_val = X["Monthly_Price_Cents_per_kWh"].iloc[0] if "Monthly_Price_Cents_per_kWh" in X.columns else None
-        print(f"  DEBUG Prediction #{_predict_next._debug_count}: CAISO Total={caiso_val:.2f}, Price={price_val:.2f}, Date={next_date}")
+        print(
+            f"  DEBUG Prediction #{_predict_next._debug_count}: CAISO Total={caiso_val:.2f}, Price={price_val:.2f}, Date={next_date}")
 
     pred = model.predict(X)[0]
 
@@ -572,13 +578,16 @@ def run_inference():
     # Limit predictions to reach current day + 1 month
     # Started from Sept 30, we need ~120 days to reach late Jan 2026
     target_future = now + timedelta(days=31)
-    target_future_hour = target_future.replace(minute=0, second=0, microsecond=0)
-    target_future_day = target_future.replace(hour=0, minute=0, second=0, microsecond=0)
+    target_future_hour = target_future.replace(
+        minute=0, second=0, microsecond=0)
+    target_future_day = target_future.replace(
+        hour=0, minute=0, second=0, microsecond=0)
     target_future_month = datetime(target_future.year, target_future.month, 1)
 
     max_pred_hour = last_hourly_timestamp + timedelta(days=150)
     max_pred_day = last_daily_date + timedelta(days=180)
-    max_pred_week = pd.to_datetime(weekly["week_start"].iloc[-1]) + timedelta(weeks=32)
+    max_pred_week = pd.to_datetime(
+        weekly["week_start"].iloc[-1]) + timedelta(weeks=32)
     max_pred_month = last_monthly_date + DateOffset(months=18)
 
     # Use the earlier of: current time or max prediction window
@@ -704,7 +713,7 @@ def run_inference():
                 f"week_{current_pred_week.strftime('%Y-%m-%d')}",
                 freq="W",
                 target_date=current_pred_week,
-                max_hist_date=last_daily_date, # Weekly uses daily data as base
+                max_hist_date=last_daily_date,  # Weekly uses daily data as base
             )
             all_predictions.append(pred)
 
@@ -718,15 +727,31 @@ def run_inference():
             week_count += 1
 
     # Monthly predictions: from last month + 1 to limit
+    # Also include the last historical month if we're currently in that month (it might be incomplete)
     if last_monthly_date < pred_month_limit:
         monthly_df = monthly.rename(columns={"year_month_start": "date"})
-        current_pred_month = pd.to_datetime(
-            last_monthly_date) + DateOffset(months=1)
+
+        # Check if we're currently in the same month as the last historical month
+        # If so, that month might be incomplete and should be predicted
+        current_month_start = datetime(now.year, now.month, 1)
+        last_monthly_dt = pd.to_datetime(last_monthly_date)
+
+        if last_monthly_dt == current_month_start:
+            # We're in the same month as last historical, so it's incomplete - predict it
+            current_pred_month = last_monthly_dt
+            print(
+                f"  Note: Last historical month ({last_monthly_dt.strftime('%Y-%m')}) is current month and may be incomplete, including it in predictions")
+        else:
+            # Start from the month after the last historical month
+            current_pred_month = last_monthly_dt + DateOffset(months=1)
+
         max_months = 12  # Max 12 months of monthly predictions
         month_count = 0
 
         print(
             f"Generating monthly predictions from {current_pred_month} to {pred_month_limit} (max {max_months} months)...")
+        print(
+            f"  Last historical month: {last_monthly_dt.strftime('%Y-%m')}, Starting predictions from: {current_pred_month.strftime('%Y-%m')}")
         while current_pred_month <= pred_month_limit and month_count < max_months:
             print(f"  Progress: {month_count}/{max_months} months")
             pred = _predict_next(
