@@ -29,8 +29,6 @@ def _read_csv(path: Path) -> pd.DataFrame:
     return pd.read_csv(path) if path.exists() else pd.DataFrame()
 
 
-
-
 def _load_hourly_data() -> pd.DataFrame:
     """Load hourly data from hourly_price files."""
     hourly_files = sorted(
@@ -105,7 +103,6 @@ def build():
     else:
         hourly = hourly_features
 
-
     # Process data for unified view
     unified_data = []
 
@@ -124,7 +121,7 @@ def build():
                 "for": "hourly",
                 "type": "historical"
             })
-    
+
     # Daily
     if not daily.empty:
         for _, row in daily.iterrows():
@@ -138,22 +135,27 @@ def build():
                 "for": "daily",
                 "type": "historical"
             })
-    
+
     # Weekly
     if not daily.empty:
         daily["date_dt"] = pd.to_datetime(daily["date"])
-        daily["week_start"] = daily["date_dt"] - pd.to_timedelta(daily["date_dt"].dt.dayofweek, unit="d")
-        weekly = daily.groupby("week_start")["Estimated_Hourly_Cost_USD"].sum().reset_index()
+        daily["week_start"] = daily["date_dt"] - \
+            pd.to_timedelta(daily["date_dt"].dt.dayofweek, unit="d")
+        weekly = daily.groupby("week_start")[
+            "Estimated_Hourly_Cost_USD"].sum().reset_index()
         for _, row in weekly.iterrows():
             week_start = row["week_start"]
             week_end = week_start + pd.Timedelta(days=6)
             # Format as "Jan 1-7, 2025" or "Dec 29 - Jan 4, 2025" if spanning months
             if week_start.month == week_end.month:
-                date_str = week_start.strftime("%b %d") + "-" + week_end.strftime("%d, %Y")
+                date_str = week_start.strftime(
+                    "%b %d") + "-" + week_end.strftime("%d, %Y")
             else:
-                date_str = week_start.strftime("%b %d") + " - " + week_end.strftime("%b %d, %Y")
+                date_str = week_start.strftime(
+                    "%b %d") + " - " + week_end.strftime("%b %d, %Y")
             unified_data.append({
-                "date": week_start.strftime("%Y-%m-%d"),  # Keep ISO format for sorting/filtering
+                # Keep ISO format for sorting/filtering
+                "date": week_start.strftime("%Y-%m-%d"),
                 "date_display": date_str,  # Human-readable format
                 "year": int(week_start.year),
                 "month": week_start.strftime("%B"),  # Full month name
@@ -161,7 +163,7 @@ def build():
                 "for": "weekly",
                 "type": "historical"
             })
-            
+
     # Monthly
     if not monthly.empty:
         for _, row in monthly.iterrows():
@@ -169,7 +171,8 @@ def build():
             # Format as "January 2025" or "Jan 2025"
             date_str = month_date.strftime("%B %Y")  # Full month name
             unified_data.append({
-                "date": month_date.strftime("%Y-%m-%d"),  # Keep ISO format for sorting/filtering
+                # Keep ISO format for sorting/filtering
+                "date": month_date.strftime("%Y-%m-%d"),
                 "date_display": date_str,  # Human-readable format
                 "year": int(month_date.year),
                 "month": month_date.strftime("%B"),  # Full month name
@@ -183,15 +186,20 @@ def build():
         preds["feature_date"] = pd.to_datetime(preds["feature_date"])
         for _, row in preds.iterrows():
             gran = str(row["for"]).lower()
-            if "hour" in gran: g = "hourly"
-            elif "day" in gran: g = "daily"
-            elif "week" in gran: g = "weekly"
-            elif "month" in gran: g = "monthly"
-            else: g = "unknown"
-            
+            if "hour" in gran:
+                g = "hourly"
+            elif "day" in gran:
+                g = "daily"
+            elif "week" in gran:
+                g = "weekly"
+            elif "month" in gran:
+                g = "monthly"
+            else:
+                g = "unknown"
+
             # Format date based on granularity for consistency
             d_val = row["feature_date"]
-            if g == "monthly": 
+            if g == "monthly":
                 d_str = d_val.strftime("%Y-%m-%d")
                 date_display = d_val.strftime("%B %Y")  # "January 2025"
                 unified_data.append({
@@ -203,7 +211,7 @@ def build():
                     "for": g,
                     "type": "prediction"
                 })
-            elif g == "hourly": 
+            elif g == "hourly":
                 d_str = d_val.strftime("%Y-%m-%d %H:%M:%S")
                 date_display = d_str
                 unified_data.append({
@@ -223,9 +231,11 @@ def build():
                 week_end = week_start + pd.Timedelta(days=6)
                 d_str = week_start.strftime("%Y-%m-%d")
                 if week_start.month == week_end.month:
-                    date_display = week_start.strftime("%b %d") + "-" + week_end.strftime("%d, %Y")
+                    date_display = week_start.strftime(
+                        "%b %d") + "-" + week_end.strftime("%d, %Y")
                 else:
-                    date_display = week_start.strftime("%b %d") + " - " + week_end.strftime("%b %d, %Y")
+                    date_display = week_start.strftime(
+                        "%b %d") + " - " + week_end.strftime("%b %d, %Y")
                 unified_data.append({
                     "date": d_str,
                     "date_display": date_display,
@@ -235,7 +245,7 @@ def build():
                     "for": g,
                     "type": "prediction"
                 })
-            else: 
+            else:
                 d_str = d_val.strftime("%Y-%m-%d")
                 date_display = d_str
                 unified_data.append({
@@ -290,6 +300,9 @@ def build():
         "th.sortable.asc::after { content: '↑'; opacity: 1; color: #3b82f6; }",
         "th.sortable.desc::after { content: '↓'; opacity: 1; color: #3b82f6; }",
         ".pagination-controls { display: flex; justify-content: space-between; align-items: center; margin-top: 1rem; flex-wrap: wrap; gap: 0.5rem; }",
+        ".btn:disabled, .btn.disabled { opacity: 0.5; cursor: not-allowed; pointer-events: none; }",
+        ".flatpickr-day.disabled, .flatpickr-day.not-allowed { opacity: 0.3; cursor: not-allowed; }",
+        ".flatpickr-day.disabled:hover, .flatpickr-day.not-allowed:hover { background: transparent; }",
         "</style>",
         "</head>",
         "<body>",
@@ -416,7 +429,8 @@ def build():
 """)
 
     # Extract valid dates for flatpickr enable list
-    all_valid_dates = sorted(list(set([d["date"].split(' ')[0] for d in unified_data])))
+    all_valid_dates = sorted(
+        list(set([d["date"].split(' ')[0] for d in unified_data])))
 
     # Unified Dashboard Script (Historical + Predictions)
     html_parts.append(f"""
@@ -489,6 +503,7 @@ function updateView() {{
     
     updateChart(chartData, granularity, start, end);
     applyTableState(selectedDateStr);
+    updateNavigationButtons();
 }}
 
 function applyTableState(targetDateStr) {{
@@ -736,10 +751,105 @@ function updateChart(data, granularity, start, end) {{
     Plotly.newPlot(container, traces, layout, {{responsive: true}});
 }}
 
+function updateNavigationButtons() {{
+    const granularity = document.getElementById('granularity')?.value || 'monthly';
+    const currentDateStr = document.getElementById('date-range').value || (fp ? fp.formatDate(fp.selectedDates[0], 'Y-m-d') : '');
+    const prevBtn = document.getElementById('chart-prev-btn');
+    const nextBtn = document.getElementById('chart-next-btn');
+    
+    if (!currentDateStr || !prevBtn || !nextBtn) {{
+        if (prevBtn) {{
+            prevBtn.disabled = true;
+            prevBtn.classList.add('disabled');
+        }}
+        if (nextBtn) {{
+            nextBtn.disabled = true;
+            nextBtn.classList.add('disabled');
+        }}
+        return;
+    }}
+    
+    const currentDate = new Date(currentDateStr + 'T00:00:00');
+    const sortedDates = [...validDates].sort();
+    
+    // Check if there's data for previous period
+    let hasPrevData = false;
+    if (granularity === 'hourly') {{
+        const prevDate = new Date(currentDate);
+        prevDate.setDate(currentDate.getDate() - 1);
+        const prevDateStr = prevDate.toISOString().split('T')[0];
+        hasPrevData = sortedDates.some(d => d <= prevDateStr && d < currentDateStr);
+    }} else if (granularity === 'daily') {{
+        const prevDate = new Date(currentDate);
+        prevDate.setDate(currentDate.getDate() - 7);
+        const prevDateStr = prevDate.toISOString().split('T')[0];
+        hasPrevData = sortedDates.some(d => d <= prevDateStr && d < currentDateStr);
+    }} else if (granularity === 'weekly') {{
+        const prevDate = new Date(currentDate);
+        prevDate.setMonth(currentDate.getMonth() - 1);
+        const prevDateStr = prevDate.toISOString().split('T')[0];
+        hasPrevData = sortedDates.some(d => d <= prevDateStr && d < currentDateStr);
+    }} else if (granularity === 'monthly') {{
+        const prevDate = new Date(currentDate);
+        prevDate.setFullYear(currentDate.getFullYear() - 1);
+        const prevYear = prevDate.getFullYear();
+        hasPrevData = sortedDates.some(d => {{
+            const dYear = new Date(d + 'T00:00:00').getFullYear();
+            return dYear < currentDate.getFullYear();
+        }});
+    }}
+    
+    // Check if there's data for next period
+    let hasNextData = false;
+    if (granularity === 'hourly') {{
+        const nextDate = new Date(currentDate);
+        nextDate.setDate(currentDate.getDate() + 1);
+        const nextDateStr = nextDate.toISOString().split('T')[0];
+        hasNextData = sortedDates.some(d => d >= nextDateStr && d > currentDateStr);
+    }} else if (granularity === 'daily') {{
+        const nextDate = new Date(currentDate);
+        nextDate.setDate(currentDate.getDate() + 7);
+        const nextDateStr = nextDate.toISOString().split('T')[0];
+        hasNextData = sortedDates.some(d => d >= nextDateStr && d > currentDateStr);
+    }} else if (granularity === 'weekly') {{
+        const nextDate = new Date(currentDate);
+        nextDate.setMonth(currentDate.getMonth() + 1);
+        const nextDateStr = nextDate.toISOString().split('T')[0];
+        hasNextData = sortedDates.some(d => d >= nextDateStr && d > currentDateStr);
+    }} else if (granularity === 'monthly') {{
+        const nextYear = currentDate.getFullYear() + 1;
+        hasNextData = sortedDates.some(d => {{
+            const dYear = new Date(d + 'T00:00:00').getFullYear();
+            return dYear > currentDate.getFullYear();
+        }});
+    }}
+    
+    // Update button states
+    prevBtn.disabled = !hasPrevData;
+    nextBtn.disabled = !hasNextData;
+    
+    // Add/remove disabled class for styling
+    if (hasPrevData) {{
+        prevBtn.classList.remove('disabled');
+    }} else {{
+        prevBtn.classList.add('disabled');
+    }}
+    
+    if (hasNextData) {{
+        nextBtn.classList.remove('disabled');
+    }} else {{
+        nextBtn.classList.add('disabled');
+    }}
+}}
+
 function navigateChart(direction) {{
     const granularity = document.getElementById('granularity')?.value || 'monthly';
     const currentDateStr = document.getElementById('date-range').value || (fp ? fp.formatDate(fp.selectedDates[0], 'Y-m-d') : '');
     if (!currentDateStr) return;
+    
+    // Prevent navigation if button is disabled
+    const btn = direction === 'prev' ? document.getElementById('chart-prev-btn') : document.getElementById('chart-next-btn');
+    if (btn && btn.disabled) return;
     
     const currentDate = new Date(currentDateStr + 'T00:00:00');
     let newDate = new Date(currentDate);
