@@ -323,6 +323,12 @@ def build():
         "<label for='date-range' class='form-label'>Date Range</label>",
         "<input type='text' id='date-range' class='form-control form-control-sm' placeholder='Select range...'>",
         "</div>",
+        "<div class='mb-3' id='period-navigation' style='display:none;'>",
+        "<label for='period-select' class='form-label' id='period-label'>Navigate to</label>",
+        "<select id='period-select' class='form-select form-select-sm'>",
+        "<option value=''>Select period...</option>",
+        "</select>",
+        "</div>",
         "</div>",
         "</aside>",
         "<main class='col-md-9 col-lg-10 py-3'>",
@@ -793,9 +799,125 @@ document.querySelectorAll('th.sortable').forEach(th => {{
     th.addEventListener('click', () => handleSort(th.dataset.sort));
 }});
 
+function updatePeriodNavigation() {{
+    const granularity = document.getElementById('granularity')?.value || 'monthly';
+    const periodNav = document.getElementById('period-navigation');
+    const periodSelect = document.getElementById('period-select');
+    const periodLabel = document.getElementById('period-label');
+    
+    if (!periodNav || !periodSelect) return;
+    
+    // Filter data by granularity
+    const filteredData = allData.filter(d => d.for === granularity);
+    if (filteredData.length === 0) {{
+        periodNav.style.display = 'none';
+        return;
+    }}
+    
+    periodNav.style.display = 'block';
+    periodSelect.innerHTML = '<option value="">Select period...</option>';
+    
+    if (granularity === 'hourly') {{
+        // Show all available days
+        periodLabel.textContent = 'Navigate to Day';
+        const days = [...new Set(filteredData.map(d => d.date.split(' ')[0]))].sort().reverse();
+        days.forEach(day => {{
+            const date = new Date(day);
+            const option = document.createElement('option');
+            option.value = day;
+            option.textContent = date.toLocaleDateString('en-US', {{ weekday: 'short', year: 'numeric', month: 'short', day: 'numeric' }});
+            periodSelect.appendChild(option);
+        }});
+    }} else if (granularity === 'daily') {{
+        // Show all available weeks
+        periodLabel.textContent = 'Navigate to Week';
+        const weeks = new Map();
+        filteredData.forEach(d => {{
+            const date = new Date(d.date);
+            const weekStart = new Date(date);
+            const day = weekStart.getDay();
+            const diff = weekStart.getDate() - day + (day === 0 ? -6 : 1);
+            weekStart.setDate(diff);
+            weekStart.setHours(0, 0, 0, 0);
+            const weekEnd = new Date(weekStart);
+            weekEnd.setDate(weekStart.getDate() + 6);
+            
+            const weekKey = weekStart.toISOString().split('T')[0];
+            if (!weeks.has(weekKey)) {{
+                const weekStr = weekStart.toLocaleDateString('en-US', {{ month: 'short', day: 'numeric' }}) + 
+                              ' - ' + weekEnd.toLocaleDateString('en-US', {{ month: 'short', day: 'numeric', year: 'numeric' }});
+                weeks.set(weekKey, weekStr);
+            }}
+        }});
+        const sortedWeeks = Array.from(weeks.entries()).sort((a, b) => b[0].localeCompare(a[0]));
+        sortedWeeks.forEach(([date, label]) => {{
+            const option = document.createElement('option');
+            option.value = date;
+            option.textContent = label;
+            periodSelect.appendChild(option);
+        }});
+    }} else if (granularity === 'weekly') {{
+        // Show all available months
+        periodLabel.textContent = 'Navigate to Month';
+        const months = new Map();
+        filteredData.forEach(d => {{
+            const date = new Date(d.date);
+            const monthKey = `${{date.getFullYear()}}-${{String(date.getMonth() + 1).padStart(2, '0')}}`;
+            if (!months.has(monthKey)) {{
+                const monthStr = date.toLocaleDateString('en-US', {{ year: 'numeric', month: 'long' }});
+                months.set(monthKey, monthStr);
+            }}
+        }});
+        const sortedMonths = Array.from(months.entries()).sort((a, b) => b[0].localeCompare(a[0]));
+        sortedMonths.forEach(([date, label]) => {{
+            const option = document.createElement('option');
+            option.value = date + '-01';
+            option.textContent = label;
+            periodSelect.appendChild(option);
+        }});
+    }} else if (granularity === 'monthly') {{
+        // Show all available years
+        periodLabel.textContent = 'Navigate to Year';
+        const years = [...new Set(filteredData.map(d => {{
+            const date = new Date(d.date);
+            return date.getFullYear();
+        }}))].sort((a, b) => b - a);
+        years.forEach(year => {{
+            const option = document.createElement('option');
+            option.value = `${{year}}-01-01`;
+            option.textContent = year;
+            periodSelect.appendChild(option);
+        }});
+    }}
+}}
+
+function handlePeriodNavigation() {{
+    const periodSelect = document.getElementById('period-select');
+    if (!periodSelect || !periodSelect.value) return;
+    
+    const targetDate = periodSelect.value;
+    if (fp) {{
+        fp.setDate(targetDate, false);
+        updateView();
+    }} else {{
+        document.getElementById('date-range').value = targetDate;
+        updateView();
+    }}
+    periodSelect.value = ''; // Reset selection
+}}
+
 // Chart navigation buttons
 document.getElementById('chart-prev-btn').addEventListener('click', () => navigateChart('prev'));
 document.getElementById('chart-next-btn').addEventListener('click', () => navigateChart('next'));
+
+// Period navigation dropdown
+document.getElementById('period-select').addEventListener('change', handlePeriodNavigation);
+
+// Update period navigation when granularity changes
+document.getElementById('granularity').addEventListener('change', () => {{
+    updatePeriodNavigation();
+    updateView();
+}});
 
 // Initialize flatpickr
 fp = flatpickr('#date-range', {{ 
@@ -807,9 +929,8 @@ fp = flatpickr('#date-range', {{
 }});
 
 // Initial call
+updatePeriodNavigation();
 updateView();
-
-document.getElementById('granularity').addEventListener('change', updateView);
 
 // Navigation Logic
 (function() {{
