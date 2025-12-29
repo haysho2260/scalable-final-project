@@ -532,7 +532,10 @@ function updateView() {{
         // Count unique months in the selected year
         const uniqueMonths = new Set(monthsInYear.map(d => {{
             const dDate = new Date(d.date);
-            return `${dDate.getFullYear()}-${String(dDate.getMonth() + 1).padStart(2, '0')}`;
+            const year = dDate.getFullYear();
+            const month = dDate.getMonth() + 1;
+            const monthStr = month < 10 ? '0' + month : month.toString();
+            return year + '-' + monthStr;
         }}));
         
         // If only one month in the selected year, add previous 2 months
