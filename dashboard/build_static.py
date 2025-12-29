@@ -731,8 +731,32 @@ function updateChart(data, granularity, start, end) {{
     const container = document.getElementById('energy-chart-container');
     if (!container) return;
     
-    const hist = data.filter(d => d.type === 'historical');
-    const pred = data.filter(d => d.type === 'prediction');
+    // Sort all data by date to ensure proper ordering
+    const sortedData = [...data].sort((a, b) => {{
+        const dateA = new Date(a.date);
+        const dateB = new Date(b.date);
+        return dateA - dateB;
+    }});
+    
+    // For monthly data, handle duplicates: if same month exists in both historical and prediction,
+    // prefer prediction for that month to avoid disconnect
+    let processedData = sortedData;
+    if (granularity === 'monthly') {{
+        const monthMap = new Map();
+        // First pass: collect all data by month
+        sortedData.forEach(d => {{
+            const monthKey = d.date.substring(0, 7); // YYYY-MM
+            if (!monthMap.has(monthKey) || d.type === 'prediction') {{
+                monthMap.set(monthKey, d);
+            }}
+        }});
+        processedData = Array.from(monthMap.values()).sort((a, b) => {{
+            return new Date(a.date) - new Date(b.date);
+        }});
+    }}
+    
+    const hist = processedData.filter(d => d.type === 'historical');
+    const pred = processedData.filter(d => d.type === 'prediction');
     const traces = [];
     
     if (hist.length > 0) {{
@@ -749,15 +773,38 @@ function updateChart(data, granularity, start, end) {{
     }}
     
     if (pred.length > 0) {{
+        // For monthly, ensure smooth connection between historical and predictions
+        let connectX = pred.map(d => d.date_display || d.date);
+        let connectY = pred.map(d => d.val);
+        
+        if (granularity === 'monthly' && hist.length > 0 && pred.length > 0) {{
+            const lastHist = hist[hist.length - 1];
+            const firstPred = pred[0];
+            const lastHistDate = new Date(lastHist.date);
+            const firstPredDate = new Date(firstPred.date);
+            
+            // Calculate month difference
+            const monthsDiff = (firstPredDate.getFullYear() - lastHistDate.getFullYear()) * 12 + 
+                              (firstPredDate.getMonth() - lastHistDate.getMonth());
+            
+            // If predictions start immediately after historical (adjacent months), 
+            // add the last historical point to create a smooth transition
+            if (monthsDiff === 1) {{
+                connectX = [lastHist.date_display || lastHist.date, ...connectX];
+                connectY = [lastHist.val, ...connectY];
+            }}
+        }}
+        
         traces.push({{
-            x: pred.map(d => d.date_display || d.date),
-            y: pred.map(d => d.val),
+            x: connectX,
+            y: connectY,
             type: 'scatter',
             mode: 'lines+markers',
             name: 'Predicted Cost',
             line: {{ color: '#3b82f6', width: 3, dash: 'dash' }},
             marker: {{ size: 8 }},
-            hovertemplate: '<b>%{{x}}</b><br>Cost: $%{{y:.2f}}<extra></extra>'
+            hovertemplate: '<b>%{{x}}</b><br>Cost: $%{{y:.2f}}<extra></extra>',
+            connectgaps: true
         }});
     }}
     
