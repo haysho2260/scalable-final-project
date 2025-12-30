@@ -153,7 +153,6 @@ def _format_evaluation_charts(data: dict) -> str:
                 }};
                 
                 const layout = {{
-                    title: '${{granularity.toUpperCase()}} Model: Predictions vs Actual Values',
                     xaxis: {{ title: 'Date' }},
                     yaxis: {{ title: 'Cost (USD)' }},
                     height: 400,
@@ -505,7 +504,10 @@ def build():
         "</div>",
         "<div class='mb-3'>",
         "<label for='date-range' class='form-label'>Date Range</label>",
+        "<div class='input-group input-group-sm'>",
         "<input type='text' id='date-range' class='form-control form-control-sm' placeholder='Select range...'>",
+        "<button type='button' id='today-btn' class='btn btn-outline-primary btn-sm' title='Go to current period'>Today</button>",
+        "</div>",
         "</div>",
         "<div class='mb-3' id='period-navigation' style='display:none;'>",
         "<label for='period-select' class='form-label' id='period-label'>Navigate to</label>",
@@ -1414,6 +1416,37 @@ fp = flatpickr('#date-range', {{
     defaultDate: validDates[validDates.length - 1],
     onChange: updateView 
 }});
+
+// Today button handler
+function goToToday() {{
+    const granularity = document.getElementById('granularity')?.value || 'monthly';
+    const now = new Date();
+    
+    // Format today's date as YYYY-MM-DD
+    const todayStr = now.getFullYear() + '-' + 
+                     String(now.getMonth() + 1).padStart(2, '0') + '-' + 
+                     String(now.getDate()).padStart(2, '0');
+    
+    // Check if today is in valid dates, if not, use the most recent valid date
+    let targetDate = todayStr;
+    if (!validDates.includes(todayStr)) {{
+        // Find the closest valid date (prefer past dates)
+        const pastDates = validDates.filter(d => d <= todayStr);
+        targetDate = pastDates.length > 0 ? pastDates[pastDates.length - 1] : validDates[validDates.length - 1];
+    }}
+    
+    // Set the flatpickr date
+    if (fp) {{
+        fp.setDate(targetDate, false); // false = don't trigger onChange immediately
+        updateView();
+    }}
+}}
+
+// Attach event listener to Today button
+const todayBtn = document.getElementById('today-btn');
+if (todayBtn) {{
+    todayBtn.addEventListener('click', goToToday);
+}}
 
 // Initial call
 updatePeriodNavigation();

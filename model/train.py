@@ -175,12 +175,13 @@ def _train_and_eval(
         )
     else:
         # Improved HistGradientBoosting hyperparameters
+        # For daily model, use more aggressive settings to reduce underprediction
         model = HistGradientBoostingRegressor(
-            max_depth=12,
-            max_iter=500,
-            learning_rate=0.03,
-            min_samples_leaf=5,
-            l2_regularization=0.1,
+            max_depth=15,
+            max_iter=600,
+            learning_rate=0.05,  # Slightly higher learning rate for faster convergence
+            min_samples_leaf=3,  # Smaller leaf size for more detail
+            l2_regularization=0.05,  # Less regularization to allow higher predictions
             random_state=42
         )
     
@@ -273,7 +274,7 @@ def train_daily_and_monthly():
         target_col=target,
         model_path=ROOT / "model" / "daily_spend_model.pkl",
         feature_exclude=["date", "year_month"],
-        model_type="rf"
+        model_type="hgb"  # Switch to HistGradientBoosting for better performance
     )
     _, monthly_metrics = _train_and_eval(
         monthly.rename(columns={"year_month_start": "date"}),
