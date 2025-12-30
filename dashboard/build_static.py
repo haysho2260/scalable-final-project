@@ -827,9 +827,39 @@ function updateView() {{
     applyTableState(selectedDateStr);
     updateNavigationButtons();
     
+    // Update recommendations container
+    updateRecommendations();
+    
     // Trigger chatbot recommendations if available
     if (window.chatbotGenerateRecommendations) {{
         setTimeout(() => window.chatbotGenerateRecommendations(), 1000);
+    }}
+}}
+
+function updateRecommendations() {{
+    const container = document.getElementById('recommendations-container');
+    if (!container) return;
+    
+    // Get all data for recommendations (use allData, not just filtered chartData)
+    const granularity = document.getElementById('granularity')?.value || 'monthly';
+    let recommendationData = [];
+    
+    if (typeof allData !== 'undefined' && allData.length > 0) {{
+        // Use all data for recommendations, not just the filtered view
+        recommendationData = allData;
+    }}
+    
+    if (recommendationData.length === 0) {{
+        container.innerHTML = '<p class="text-muted">Select a granularity and date to see recommendations.</p>';
+        return;
+    }}
+    
+    // Use the generateRecommendations function (defined in chatbot section)
+    if (typeof window.generateRecommendations === 'function') {{
+        const recommendations = window.generateRecommendations(recommendationData);
+        container.innerHTML = recommendations;
+    }} else {{
+        container.innerHTML = '<p class="text-muted">Recommendations will appear here once data is loaded.</p>';
     }}
 }}
 
@@ -1700,6 +1730,9 @@ updateView();
             
             return recommendations.join('');
         }
+        
+        // Make generateRecommendations globally accessible for recommendations container
+        window.generateRecommendations = generateRecommendations;
         
         function handleChatbotQuery(query) {
             const lowerQuery = query.toLowerCase();
