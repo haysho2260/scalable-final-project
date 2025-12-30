@@ -9,7 +9,7 @@ Results are written to `results/predictions.csv`.
 """
 
 from __future__ import annotations
-
+from model.train import build_hourly_dataset
 
 
 from datetime import timedelta, datetime
@@ -27,7 +27,6 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from model.train import build_hourly_dataset
 
 RESULTS_DIR = ROOT / "results"
 HOURLY_MODEL_PATH = ROOT / "model" / "hourly_spend_model.pkl"
@@ -220,9 +219,20 @@ def _predict_next(
 
     # Use the most recent similar row, or fall back to last row
     if not similar_rows.empty:
-        # Use the most recent similar period (but not the exact same date)
-        # Use iloc[[-1]] to ensure we get a DataFrame, not a Series
-        base_row = similar_rows.iloc[[-1]].copy()
+        # For hourly predictions, add variation by using different similar periods
+        # This prevents all future hours from having identical features (which causes flat predictions)
+        if freq.upper().startswith("H") and len(similar_rows) > 1:
+            # For hourly: randomly select from recent similar periods to add variation
+            # Use the last few similar periods to maintain relevance while adding variation
+            import random
+            n_similar = min(5, len(similar_rows))
+            selected_idx = random.randint(
+                max(0, len(similar_rows) - n_similar), len(similar_rows) - 1)
+            base_row = similar_rows.iloc[[selected_idx]].copy()
+        else:
+            # Use the most recent similar period (but not the exact same date)
+            # Use iloc[[-1]] to ensure we get a DataFrame, not a Series
+            base_row = similar_rows.iloc[[-1]].copy()
     else:
         # Fallback: use last row but we'll update features
         base_row = last_row.copy()
@@ -358,9 +368,16 @@ def _predict_next(
     critical_features = ["CAISO Total", "Monthly_Price_Cents_per_kWh"]
 
     if not similar_rows.empty:
-        # Use the most recent similar period's actual values (gives natural variation)
-        # Use iloc[[-1]] to ensure we get a DataFrame
-        similar_row_actual = similar_rows.iloc[[-1]].copy()
+        # For hourly predictions, use average of multiple similar periods to add variation
+        # This prevents all future hours from having identical features (which causes flat predictions)
+        if freq.upper().startswith("H") and len(similar_rows) > 1:
+            # Use average of last 3-5 similar periods for hourly to add natural variation
+            n_avg = min(5, len(similar_rows))
+            similar_row_actual = similar_rows.iloc[-n_avg:].mean().to_frame().T
+        else:
+            # Use the most recent similar period's actual values (gives natural variation)
+            # Use iloc[[-1]] to ensure we get a DataFrame
+            similar_row_actual = similar_rows.iloc[[-1]].copy()
 
         # First, set critical features from similar periods (these are essential for accurate predictions)
         for col in critical_features:
