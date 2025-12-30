@@ -111,6 +111,9 @@ def _format_evaluation_charts(data: dict) -> str:
             const container = document.getElementById('evaluation-charts-container');
             if (!container || !evaluationData) return;
             
+            // Clear any existing charts to prevent duplicates
+            container.innerHTML = '';
+            
             Object.keys(evaluationData).forEach(granularity => {{
                 const data = evaluationData[granularity];
                 if (!data || data.length === 0) return;
@@ -161,7 +164,13 @@ def _format_evaluation_charts(data: dict) -> str:
             }});
         }}
         
-        // Render charts when evaluations section is shown
+        // Render charts immediately if data exists, and when evaluations section is shown
+        if (Object.keys(evaluationData).length > 0) {{
+            // Render charts on page load if data exists
+            setTimeout(renderEvaluationCharts, 100);
+        }}
+        
+        // Also render when evaluations section is shown (in case section was already visible)
         const navEvaluations = document.getElementById('nav-evaluations');
         if (navEvaluations) {{
             navEvaluations.addEventListener('click', () => {{
