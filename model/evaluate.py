@@ -464,9 +464,13 @@ def calculate_metrics(predictions: dict) -> dict:
         print(f"  RMSE (Root Mean Squared Error): ${metrics['rmse']:.4f}")
         print(f"  MAPE (Mean Absolute Percentage Error): {metrics['mape']:.2f}%")
         print(f"  R² (Coefficient of Determination): {metrics['r2']:.4f}")
+        if metrics['r2'] < 0:
+            print(f"    ⚠️  Negative R² means model is worse than predicting the mean")
         print(f"  Mean Actual: ${metrics['mean_actual']:.2f}")
         print(f"  Mean Predicted: ${metrics['mean_predicted']:.2f}")
         print(f"  Mean Error: ${metrics['mean_error']:.2f}")
+        if abs(metrics['mean_error']) > metrics['mean_actual'] * 0.1:
+            print(f"    ⚠️  Large systematic bias detected (under/over-prediction)")
         print(f"  RMSE as % of Mean: {metrics['rmse_percentage']:.2f}%")
     
     return all_metrics
