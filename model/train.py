@@ -163,9 +163,26 @@ def _train_and_eval(
     y_train, y_test = y.iloc[:split_idx], y.iloc[split_idx:]
 
     if model_type == "rf":
-        model = RandomForestRegressor(n_estimators=100, random_state=42)
+        # Improved RandomForest hyperparameters for better performance
+        model = RandomForestRegressor(
+            n_estimators=300,
+            max_depth=20,
+            min_samples_split=5,
+            min_samples_leaf=2,
+            max_features='sqrt',
+            random_state=42,
+            n_jobs=-1
+        )
     else:
-        model = HistGradientBoostingRegressor(max_depth=8, max_iter=300, learning_rate=0.05)
+        # Improved HistGradientBoosting hyperparameters
+        model = HistGradientBoostingRegressor(
+            max_depth=12,
+            max_iter=500,
+            learning_rate=0.03,
+            min_samples_leaf=5,
+            l2_regularization=0.1,
+            random_state=42
+        )
     
     model.fit(X_train, y_train)
 

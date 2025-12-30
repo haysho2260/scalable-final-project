@@ -630,7 +630,7 @@ def build():
             <p class='text-muted mb-4'>{description_text}</p>
             
             <div id='evaluation-metrics-container'>
-                {_format_evaluation_metrics(eval_metrics) if eval_metrics else '<p class="text-muted">Evaluation results not yet available. Run <code>python model/evaluate_2025.py</code> to generate evaluation metrics.</p>'}
+                {_format_evaluation_metrics(eval_metrics) if eval_metrics else '<p class="text-muted">Evaluation results not yet available. Run <code>python model/evaluate.py</code> to generate evaluation metrics.</p>'}
             </div>
             
             <div id='evaluation-charts-container' class='mt-4'>

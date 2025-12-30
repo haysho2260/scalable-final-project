@@ -109,7 +109,14 @@ def train_on_historical_data(cutoff_date: str):
                       if c not in exclude and pd.api.types.is_numeric_dtype(hourly_train[c])]
     hourly_X = hourly_train[hourly_features].ffill().bfill()
     
-    hourly_model = HistGradientBoostingRegressor(max_depth=8, max_iter=300, learning_rate=0.05)
+    hourly_model = HistGradientBoostingRegressor(
+        max_depth=12,
+        max_iter=500,
+        learning_rate=0.03,
+        min_samples_leaf=5,
+        l2_regularization=0.1,
+        random_state=42
+    )
     hourly_model.fit(hourly_X, hourly_y)
     models["hourly"] = (hourly_model, hourly_features)
     
@@ -121,7 +128,15 @@ def train_on_historical_data(cutoff_date: str):
                      if c not in exclude and pd.api.types.is_numeric_dtype(daily_train[c])]
     daily_X = daily_train[daily_features].ffill().bfill()
     
-    daily_model = RandomForestRegressor(n_estimators=100, random_state=42)
+    daily_model = RandomForestRegressor(
+        n_estimators=300,
+        max_depth=20,
+        min_samples_split=5,
+        min_samples_leaf=2,
+        max_features='sqrt',
+        random_state=42,
+        n_jobs=-1
+    )
     daily_model.fit(daily_X, daily_y)
     models["daily"] = (daily_model, daily_features)
     
@@ -133,7 +148,15 @@ def train_on_historical_data(cutoff_date: str):
                       if c not in exclude and pd.api.types.is_numeric_dtype(weekly_train[c])]
     weekly_X = weekly_train[weekly_features].ffill().bfill()
     
-    weekly_model = RandomForestRegressor(n_estimators=100, random_state=42)
+    weekly_model = RandomForestRegressor(
+        n_estimators=300,
+        max_depth=20,
+        min_samples_split=5,
+        min_samples_leaf=2,
+        max_features='sqrt',
+        random_state=42,
+        n_jobs=-1
+    )
     weekly_model.fit(weekly_X, weekly_y)
     models["weekly"] = (weekly_model, weekly_features)
     
@@ -145,7 +168,15 @@ def train_on_historical_data(cutoff_date: str):
                        if c not in exclude and pd.api.types.is_numeric_dtype(monthly_train[c])]
     monthly_X = monthly_train[monthly_features].ffill().bfill()
     
-    monthly_model = RandomForestRegressor(n_estimators=100, random_state=42)
+    monthly_model = RandomForestRegressor(
+        n_estimators=300,
+        max_depth=20,
+        min_samples_split=5,
+        min_samples_leaf=2,
+        max_features='sqrt',
+        random_state=42,
+        n_jobs=-1
+    )
     monthly_model.fit(monthly_X, monthly_y)
     models["monthly"] = (monthly_model, monthly_features)
     
