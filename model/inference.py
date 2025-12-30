@@ -220,10 +220,10 @@ def _predict_next(
 
     # Use the most recent similar row, or fall back to last row
     if not similar_rows.empty:
-        # For hourly predictions, add variation by using different similar periods
-        # This prevents all future hours from having identical features (which causes flat predictions)
-        if freq.upper().startswith("H") and len(similar_rows) > 1:
-            # For hourly: randomly select from recent similar periods to add variation
+        # For hourly and weekly predictions, add variation by using different similar periods
+        # This prevents all future periods from having identical features (which causes flat predictions)
+        if (freq.upper().startswith("H") or freq.upper().startswith("W")) and len(similar_rows) > 1:
+            # For hourly/weekly: randomly select from recent similar periods to add variation
             # Use the last few similar periods to maintain relevance while adding variation
             import random
             n_similar = min(5, len(similar_rows))
@@ -369,10 +369,10 @@ def _predict_next(
     critical_features = ["CAISO Total", "Monthly_Price_Cents_per_kWh"]
 
     if not similar_rows.empty:
-        # For hourly predictions, use average of multiple similar periods to add variation
-        # This prevents all future hours from having identical features (which causes flat predictions)
-        if freq.upper().startswith("H") and len(similar_rows) > 1:
-            # Use average of last 3-5 similar periods for hourly to add natural variation
+        # For hourly and weekly predictions, use average of multiple similar periods to add variation
+        # This prevents all future periods from having identical features (which causes flat predictions)
+        if (freq.upper().startswith("H") or freq.upper().startswith("W")) and len(similar_rows) > 1:
+            # Use average of last 3-5 similar periods for hourly/weekly to add natural variation
             n_avg = min(5, len(similar_rows))
             similar_row_actual = similar_rows.iloc[-n_avg:].mean().to_frame().T
         else:
