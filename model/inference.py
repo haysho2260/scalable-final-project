@@ -596,10 +596,14 @@ def run_inference():
     weekly.to_csv(RESULTS_DIR / "weekly_history.csv", index=False)
     monthly.to_csv(RESULTS_DIR / "monthly_history.csv", index=False)
 
-    hourly_model, hourly_features = _load_model(HOURLY_MODEL_PATH)
-    daily_model, daily_features = _load_model(DAILY_MODEL_PATH)
-    weekly_model, weekly_features = _load_model(WEEKLY_MODEL_PATH)
-    monthly_model, monthly_features = _load_model(MONTHLY_MODEL_PATH)
+    hourly_model, hourly_features, hourly_calibration = _load_model(
+        HOURLY_MODEL_PATH)
+    daily_model, daily_features, daily_calibration = _load_model(
+        DAILY_MODEL_PATH)
+    weekly_model, weekly_features, weekly_calibration = _load_model(
+        WEEKLY_MODEL_PATH)
+    monthly_model, monthly_features, monthly_calibration = _load_model(
+        MONTHLY_MODEL_PATH)
 
     # Get last data point and current time
     hourly_sorted = hourly.sort_values("timestamp")
