@@ -118,7 +118,7 @@ def _format_evaluation_charts(data: dict) -> str:
                 const chartDiv = document.createElement('div');
                 chartDiv.className = 'card mb-3';
                 chartDiv.innerHTML = `
-                    <div class='card-header fw-semibold'>${{granularity.toUpperCase()}} Predictions vs Actual (2025)</div>
+                    <div class='card-header fw-semibold'>${{granularity.toUpperCase()}} Predictions vs Actual</div>
                     <div class='card-body'>
                         <div id='eval-chart-${{granularity}}' style='height: 400px;'></div>
                     </div>
