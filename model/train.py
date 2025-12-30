@@ -188,15 +188,29 @@ def _train_and_eval(
     model.fit(X_train, y_train)
 
     preds = model.predict(X_test)
+    
+    # Calculate calibration factor to address systematic underprediction
+    # This is the ratio of mean actual to mean predicted on training data
+    train_preds = model.predict(X_train)
+    mean_actual_train = float(y_train.mean())
+    mean_pred_train = float(train_preds.mean())
+    calibration_factor = mean_actual_train / mean_pred_train if mean_pred_train > 0 else 1.0
+    
+    # Apply calibration to test predictions for metrics
+    preds_calibrated = preds * calibration_factor
+    
     metrics = {
-        "mae": float(mean_absolute_error(y_test, preds)),
-        "mape": float(mean_absolute_percentage_error(y_test, preds)),
+        "mae": float(mean_absolute_error(y_test, preds_calibrated)),
+        "mape": float(mean_absolute_percentage_error(y_test, preds_calibrated)),
         "n_train": int(len(X_train)),
         "n_test": int(len(X_test)),
+        "calibration_factor": calibration_factor,  # Store for use in inference
+        "mean_actual_train": mean_actual_train,
+        "mean_pred_train": mean_pred_train,
     }
     model_path.parent.mkdir(parents=True, exist_ok=True)
     joblib.dump({"model": model, "features": feature_cols,
-                "metrics": metrics}, model_path)
+                "metrics": metrics, "calibration_factor": calibration_factor}, model_path)
     return model, metrics
 
 

@@ -43,7 +43,9 @@ def _load_model(path: Path):
     bundle = joblib.load(path)
     model = bundle["model"]
     features = bundle["features"]
-    return model, features
+    # Default to 1.0 if not present
+    calibration_factor = bundle.get("calibration_factor", 1.0)
+    return model, features, calibration_factor
 
 
 def _build_daily_and_monthly(hourly: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -220,10 +222,10 @@ def _predict_next(
 
     # Use the most recent similar row, or fall back to last row
     if not similar_rows.empty:
-        # For hourly and weekly predictions, add variation by using different similar periods
-        # This prevents all future periods from having identical features (which causes flat predictions)
-        if (freq.upper().startswith("H") or freq.upper().startswith("W")) and len(similar_rows) > 1:
-            # For hourly/weekly: randomly select from recent similar periods to add variation
+        # For hourly, daily, and weekly predictions, add variation by using different similar periods
+        # This prevents all future periods from having identical features (which causes uniform spikes/flat predictions)
+        if (freq.upper().startswith("H") or freq.upper().startswith("D") or freq.upper().startswith("W")) and len(similar_rows) > 1:
+            # For hourly/daily/weekly: randomly select from recent similar periods to add variation
             # Use the last few similar periods to maintain relevance while adding variation
             import random
             n_similar = min(5, len(similar_rows))
@@ -369,10 +371,15 @@ def _predict_next(
     critical_features = ["CAISO Total", "Monthly_Price_Cents_per_kWh"]
 
     if not similar_rows.empty:
-        # For hourly and weekly predictions, use average of multiple similar periods to add variation
-        # This prevents all future periods from having identical features (which causes flat predictions)
-        if (freq.upper().startswith("H") or freq.upper().startswith("W")) and len(similar_rows) > 1:
-            # Use average of last 3-5 similar periods for hourly/weekly to add natural variation
+        # For daily predictions, use a single randomly selected similar period (not averaged) to prevent uniform spikes
+        # For hourly and weekly, use averaging for smoother patterns
+        if freq.upper().startswith("D") and len(similar_rows) > 1:
+            # Daily: randomly select a single similar period to get natural variation (prevents uniform spikes)
+            import random
+            selected_idx = random.randint(0, len(similar_rows) - 1)
+            similar_row_actual = similar_rows.iloc[[selected_idx]].copy()
+        elif (freq.upper().startswith("H") or freq.upper().startswith("W")) and len(similar_rows) > 1:
+            # Hourly/Weekly: use average of last 3-5 similar periods for smoother variation
             n_avg = min(5, len(similar_rows))
             similar_row_actual = similar_rows.iloc[-n_avg:].mean().to_frame().T
         else:
@@ -385,6 +392,11 @@ def _predict_next(
             if col in features and col in similar_row_actual.columns:
                 val = similar_row_actual[col].iloc[0]
                 if not pd.isna(val) and val != 0:
+                    # For daily predictions, add small random variation (±5%) to prevent uniform spikes
+                    if freq.upper().startswith("D"):
+                        import random
+                        variation = random.uniform(0.95, 1.05)  # ±5% variation
+                        val = val * variation
                     next_row[col] = val
 
         # Then update all other features from similar historical periods (except lag features which are handled separately)
@@ -393,6 +405,11 @@ def _predict_next(
                 # Use actual value from similar historical period (not average - this gives variation)
                 val = similar_row_actual[col].iloc[0]
                 if not pd.isna(val):
+                    # For daily predictions, add small random variation (±3%) to prevent uniform spikes
+                    if freq.upper().startswith("D"):
+                        import random
+                        variation = random.uniform(0.97, 1.03)  # ±3% variation
+                        val = val * variation
                     next_row[col] = val
 
     # For features not yet set or missing, use recent averages
@@ -554,6 +571,8 @@ def _predict_next(
     if pred < 0:
         pred = 0.0
 
+    # Note: Calibration factor will be applied in run_inference() where we have access to it
+
     return pd.DataFrame(
         {
             "target": [TARGET_COL],
@@ -647,6 +666,8 @@ def run_inference():
                 target_date=current_pred_hour,
                 max_hist_date=last_hourly_timestamp,
             )
+            # Apply calibration factor to correct systematic underprediction
+            pred["prediction"] = pred["prediction"] * hourly_calibration
             all_predictions.append(pred)
 
             # Update hourly_df with the prediction for next iteration
@@ -654,6 +675,7 @@ def run_inference():
             # Collect new rows in a list and concat in batches for better performance
             new_row = hourly_df.iloc[-1:].copy()
             new_row["date"] = current_pred_hour
+            # Already calibrated above
             new_row[TARGET_COL] = pred["prediction"].iloc[0]
             hourly_new_rows_buffer.append(new_row)
             # Concat every 100 rows to balance memory and performance
@@ -693,6 +715,8 @@ def run_inference():
                 target_date=current_pred_day,
                 max_hist_date=last_daily_date,
             )
+            # Apply calibration factor to correct systematic underprediction
+            pred["prediction"] = pred["prediction"] * daily_calibration
             all_predictions.append(pred)
 
             # Update daily_df with the prediction for next iteration
@@ -736,6 +760,8 @@ def run_inference():
                 target_date=current_pred_week,
                 max_hist_date=last_daily_date,  # Weekly uses daily data as base
             )
+            # Apply calibration factor to correct systematic underprediction
+            pred["prediction"] = pred["prediction"] * weekly_calibration
             all_predictions.append(pred)
 
             # Update weekly_df with the prediction for next iteration
