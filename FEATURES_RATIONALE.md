@@ -13,12 +13,17 @@ The model predicts the `Estimated_Hourly_Cost_USD` for a typical residential hou
 
 Weather is a primary driver of residential energy consumption, particularly for heating and cooling.
 
+### Acquisition Method
+We use the `openmeteo-requests` library to interface with the **Open-Meteo Archive API**. Data is fetched for Los Angeles coordinates (34.05, -118.24). The script (`get_weather.py`) implements a local cache to minimize redundant API calls and performs linear interpolation to fill any meteorological data gaps.
+
 ### Key Variables
-- **Temperature (Mean, Max, Min):** Direct impact on HVAC usage.
-- **Apparent Temperature:** Captures "feels like" conditions, which often correlate better with human behavior than raw temperature.
-- **Dew Point & Humidity:** High humidity increases the cooling load on air conditioning systems.
-- **Shortwave Radiation:** Influences both solar gain in buildings and potential local solar generation.
-- **Precipitation & Cloud Cover:** Affects outdoor activity and lighting needs.
+- **Temperature (Mean, Max, Min):** These are the primary drivers of HVAC (Heating, Ventilation, and Air Conditioning) load. Extreme highs and lows force climate control systems to work harder and longer, which accounts for the largest portion of residential energy spend.
+- **Apparent Temperature:** Also known as the "Heat Index" or "Wind Chill," it captures how humans actually perceive weather. This is often a more accurate predictor of behavioral changes—like switching on the AC—than raw dry-bulb temperature alone.
+- **Dew Point & Humidity:** High humidity levels (high dew point) impede the body's natural cooling and make air conditioning systems significantly less efficient, as they must expend energy to dehumidify the air as well as cool it.
+- **Shortwave Radiation (Solar Irradiance):** This measures the amount of solar energy (visible light and ultraviolet) reaching the Earth's surface. It is a critical predictor for two reasons:
+    - **Thermal Gain:** High radiation significantly increases the "solar gain" of buildings, heating up interiors even when air temperatures are moderate, which drives an earlier or stronger demand for air conditioning.
+    - **Distributed Generation:** In California, solar radiation is a direct proxy for behind-the-meter (residential) solar production. High radiation reduces a household's net demand on the grid, while sudden drops (due to cloud cover) can cause sharp spikes in residential grid dependency.
+- **Precipitation & Cloud Cover:** Beyond their cooling effect, these impact lifestyle behaviors. Rainy or overcast days increase the use of indoor lighting and electronics, and often result in residents staying home longer, consistently elevating the residential baseline load.
 
 ### Technical Rationale: Degree Days (CDD & HDD)
 We derive **Cooling Degree Days (CDD)** and **Heating Degree Days (HDD)** from the mean temperature.
@@ -33,6 +38,9 @@ These features provide a non-linear representation of energy demand relative to 
 
 Grid-level demand serves as a high-fidelity proxy for general energy activity patterns.
 
+### Acquisition Method
+This data is retrieved via **Web Scraping**. The script (`get_load.py`) uses `BeautifulSoup` to crawl the **CAISO Historical Library**. It identifies and downloads historical EMS hourly load files (Excel or CSV), standardizes column headers across different years, and handles the conversion of legacy `.xls` files into clean CSV format.
+
 ### Key Variables
 - **CAISO Total Load:** The total system-wide demand in the California Independent System Operator region.
 
@@ -45,6 +53,9 @@ While we predict individual household cost, the system-wide load captures broade
 **Source:** [EIA API (Retail Sales)](https://api.eia.gov/v2/electricity/retail-sales/data/)
 
 To convert energy consumption into a monetary value, we require accurate retail rate data.
+
+### Acquisition Method
+We query the **EIA Retail Sales API v2**. The request specifically targets the `monthly` frequency, filtering for `stateid: CA` and `sectorid: RES` (Residential). This provides a reliable baseline for what consumers are actually billed per kWh in California.
 
 ### Key Variables
 - **Monthly Retail Price (Cents/kWh):** The average residential rate for California.
@@ -67,11 +78,17 @@ This approach accomplishes several goals:
 
 The composition of the energy grid (the "fuel mix") provides insights into the available supply and operational constraints.
 
+### Acquisition Method
+Data is fetched from the **EIA Real-Time Operating Grid API**. We request hourly generation by fuel type for the California balancing authority (`respondent: CISO`). The script (`get_energy_types.py`) pivots the raw long-format API response into a wide format (one column per fuel type) for model compatibility.
+
 ### Key Variables
 - **Natural Gas, Solar, Wind, Hydro, Nuclear, Coal, etc.**
 
 ### Technical Rationale
-The availability of renewables (Solar/Wind) vs. dispatchable fossil fuels (Natural Gas) can correlate with grid stability and potential future pricing tiers. Including the fuel mix helps the model understand the underlying state of the energy market.
+The fuel mix is a high-fidelity signal for both the **cost** and **environmental impact** of energy:
+- **Marginal Cost Economics:** Renewables like Solar and Wind have near-zero marginal costs. When they dominate the grid (usually midday), wholesale prices tend to drop. Conversely, a high percentage of Natural Gas or Imports typically signals more expensive generation is being dispatched to meet high demand.
+- **The "Duck Curve" Signal:** In California, the transition from midday solar abundance to evening natural gas ramp-up creates the famous "Duck Curve." This transition is a direct predictor of when the grid enters its most expensive and carbon-intensive "peak" windows.
+- **Supply Constraints:** Monitoring the balance of dispatchable fuels (Natural Gas, Nuclear) vs. intermittent ones (Wind, Solar) helps the model understand grid stability and the likelihood of demand-response events or price spikes.
 
 ---
 
